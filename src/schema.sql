@@ -1,0 +1,112 @@
+-- Esquema de Gancho. Se aplica solo al arrancar (idempotente).
+
+CREATE TABLE IF NOT EXISTS usuarios (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  usuario     text UNIQUE NOT NULL,
+  clave_hash  text NOT NULL,
+  rol         text NOT NULL DEFAULT 'editor' CHECK (rol IN ('admin', 'editor')),
+  activo      boolean NOT NULL DEFAULT true,
+  creado      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS canales (
+  id               text PRIMARY KEY,               -- ej. CLAC
+  nombre           text NOT NULL,
+  voz              text NOT NULL DEFAULT '',
+  descripcion_fija text NOT NULL DEFAULT '',
+  disclaimer       text NOT NULL DEFAULT '',
+  hashtags_base    jsonb NOT NULL DEFAULT '[]',
+  logo_key         text,
+  activo           boolean NOT NULL DEFAULT true,
+  creado           timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS actores (
+  id      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  nombre  text NOT NULL,
+  fotos   jsonb NOT NULL DEFAULT '[]',              -- llaves de almacenamiento
+  creado_por text,
+  creado  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS actores_nombre_idx ON actores (lower(nombre));
+
+CREATE TABLE IF NOT EXISTS lotes (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  nombre      text NOT NULL,
+  canal       text NOT NULL REFERENCES canales(id),
+  modelo      text NOT NULL DEFAULT 'nb2',
+  auto_elegir boolean NOT NULL DEFAULT false,
+  creado_por  text NOT NULL,
+  creado      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS episodios (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  lote_id     uuid REFERENCES lotes(id) ON DELETE CASCADE,
+  orden       int NOT NULL DEFAULT 0,
+  titulo      text NOT NULL,
+  canal       text NOT NULL REFERENCES canales(id),
+  modelo      text NOT NULL DEFAULT 'nb2',
+  brief       jsonb NOT NULL,                       -- sinopsis, giro, momento, desenlace, escenario, notas
+  "cast"      jsonb NOT NULL DEFAULT '[]',
+  estado      text NOT NULL DEFAULT 'borrador',     -- borrador, en_cola, pensando, listo, error
+  error       text,
+  gancho      jsonb,
+  elegida     uuid,
+  paquete     jsonb,
+  eligiendo   boolean NOT NULL DEFAULT false,
+  creado_por  text NOT NULL,
+  creado      timestamptz NOT NULL DEFAULT now(),
+  actualizado timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS episodios_lote_idx ON episodios (lote_id, orden);
+CREATE INDEX IF NOT EXISTS episodios_act_idx ON episodios (actualizado DESC);
+
+CREATE TABLE IF NOT EXISTS propuestas (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  episodio_id uuid NOT NULL REFERENCES episodios(id) ON DELETE CASCADE,
+  slot        int NOT NULL,
+  version     int NOT NULL DEFAULT 1,
+  archivada   boolean NOT NULL DEFAULT false,
+  data        jsonb NOT NULL,                       -- titulo, formula, composicion, concepto, prompt_imagen...
+  imagen      jsonb NOT NULL DEFAULT '{"estado":"en_cola","intentos":0}',
+  evaluacion  jsonb,
+  evaluando   boolean NOT NULL DEFAULT false,
+  rehaciendo  text,
+  error_rehacer text,
+  editado     boolean NOT NULL DEFAULT false,
+  creado      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS propuestas_ep_idx ON propuestas (episodio_id) WHERE NOT archivada;
+
+CREATE TABLE IF NOT EXISTS versiones (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  propuesta_id uuid NOT NULL REFERENCES propuestas(id) ON DELETE CASCADE,
+  data         jsonb NOT NULL,
+  imagen       jsonb,
+  evaluacion   jsonb,
+  feedback     jsonb,
+  creado       timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS versiones_prop_idx ON versiones (propuesta_id, creado);
+
+CREATE TABLE IF NOT EXISTS feedback (
+  id          bigserial PRIMARY KEY,
+  canal       text NOT NULL,
+  episodio_id uuid,
+  usuario     text,
+  titulo      text,
+  objetivo    text,
+  razones     jsonb NOT NULL DEFAULT '[]',
+  comentario  text,
+  creado      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS feedback_canal_idx ON feedback (canal, creado DESC);
+
+CREATE TABLE IF NOT EXISTS uso (
+  dia      date NOT NULL DEFAULT current_date,
+  usuario  text NOT NULL,
+  imagenes int NOT NULL DEFAULT 0,
+  textos   int NOT NULL DEFAULT 0,
+  PRIMARY KEY (dia, usuario)
+);

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gancho · Prismáticoos</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/assets/app.css">
+<link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+</head>
+<body>
+<div class="login">
+  <form id="f" class="panel" autocomplete="on">
+    <div class="brand"><b>Gancho</b><small>by Prismáticoos</small></div>
+    <p class="muted" style="margin:0">Portadas, títulos y tags que hacen clic.</p>
+    <label>Usuario<input type="text" id="usuario" name="username" autocomplete="username" required></label>
+    <label>Contraseña<input type="password" id="clave" name="password" autocomplete="current-password" required></label>
+    <div class="err" id="err" role="alert"></div>
+    <button class="btn primary big" type="submit">Entrar</button>
+  </form>
+</div>
+<script src="/assets/login.js"></script>
+</body>
+</html>

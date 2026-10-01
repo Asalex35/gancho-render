@@ -1,0 +1,29 @@
+{
+  "name": "gancho",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Gancho by Prismáticoos: portadas, títulos, descripción y tags para YouTube",
+  "type": "module",
+  "main": "server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "dev": "node --watch --env-file-if-exists=.env server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "@aws-sdk/client-s3": "^3.1144.0",
+    "@aws-sdk/s3-request-presigner": "^3.1144.0",
+    "archiver": "^8.0.0",
+    "express": "^4.22.3",
+    "express-rate-limit": "^8.7.0",
+    "multer": "^2.4.0",
+    "papaparse": "^5.7.0",
+    "pg": "^8.23.1",
+    "pg-boss": "^12.35.1",
+    "sharp": "^0.35.5",
+    "zod": "^4.6.5"
+  }
+}

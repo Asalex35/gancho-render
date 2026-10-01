@@ -1,0 +1,692 @@
+// Gancho — interfaz. Sin frameworks: todo el texto se inserta con textContent (nunca innerHTML) para evitar XSS.
+
+// ================= utilidades =================
+const $app = document.getElementById("app");
+function h(tag, props = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v == null || v === false) continue;
+    if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "class") el.className = v;
+    else if (k === "style" && typeof v === "object") for (const [sk, sv] of Object.entries(v)) el.style.setProperty(sk.startsWith("--") ? sk : sk.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`), sv);
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  return el;
+}
+async function api(path, { method = "GET", body, form } = {}) {
+  const init = { method, headers: { "X-Gancho": "1" }, credentials: "same-origin" };
+  if (form) init.body = form;
+  else if (body !== undefined) { init.body = JSON.stringify(body); init.headers["Content-Type"] = "application/json"; }
+  const res = await fetch(path, init);
+  if (res.status === 401) { location.href = "/login"; throw new Error("Sesión expirada"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Algo falló. Intenta de nuevo.");
+  return data;
+}
+let toastT;
+function toast(msg, err = false) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.className = `toast${err ? " err" : ""}`; t.hidden = false;
+  clearTimeout(toastT); toastT = setTimeout(() => (t.hidden = true), err ? 6000 : 2600);
+}
+async function copiar(texto) {
+  try { await navigator.clipboard.writeText(texto); toast("Copiado"); }
+  catch { toast("No se pudo copiar. Selecciona el texto y usa Cmd+C.", true); }
+}
+const media = (key) => `/media/${key}`;
+const local = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} },
+};
+const modal = document.getElementById("modal");
+function abrirModal(...contenido) {
+  document.getElementById("modal-in").replaceChildren(...contenido);
+  if (!modal.open) modal.showModal();
+}
+const cerrarModal = () => modal.close();
+modal.addEventListener("click", (e) => { if (e.target === modal) cerrarModal(); });
+const zoom = document.getElementById("zoom");
+zoom.addEventListener("click", () => zoom.close());
+function verGrande(src) { document.getElementById("zoom-img").src = src; zoom.showModal(); }
+const fecha = (iso) => new Date(iso).toLocaleString("es-MX", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const confirmar = (titulo, texto, accion, boton = "Sí, continuar") => abrirModal(
+  h("h2", {}, titulo), texto ? h("p", { class: "muted", style: { margin: 0 } }, texto) : null,
+  h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cancelar"),
+    h("button", { class: "btn primary", type: "button", onclick: async (e) => { e.currentTarget.disabled = true; try { await accion(); cerrarModal(); } catch (er) { toast(er.message, true); e.currentTarget.disabled = false; } } }, boton)));
+function seg(opciones, valor, alCambiar) {
+  const box = h("div", { class: "seg", role: "group" });
+  box.append(...Object.entries(opciones).map(([v, txt]) => h("button", { type: "button", "aria-pressed": String(valor === v), onclick: (e) => {
+    box.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b === e.currentTarget))); alCambiar(v);
+  } }, txt)));
+  return box;
+}
+function descargar(url) { const a = h("a", { href: url, download: "" }); document.body.append(a); a.click(); a.remove(); }
+
+const ROLES = { transgresor: "Transgresor", victima: "Víctima", testigo: "Testigo", villano: "Villano", otro: "Otro" };
+const RAZONES = {
+  portada: ["No se entiende la historia", "Las caras no se parecen", "Poca emoción", "Se ve falsa o de IA", "Muy explícita", "Colores apagados", "Composición confusa", "Manos o caras deformes"],
+  titulo: ["No engancha", "Revela el final", "Muy largo", "No suena al canal", "Muy genérico", "Confuso"],
+};
+const colorScore = (v) => (v >= 80 ? "var(--good)" : v >= 65 ? "var(--mid)" : "var(--bad)");
+const etiquetaScore = (v) => (v >= 80 ? "Muy fuerte" : v >= 65 ? "Buena" : "Floja");
+const OCUPADA = (x) => ["en_cola", "generando"].includes(x.imagen?.estado) || x.evaluando || x.rehaciendo;
+
+let me = null;
+let poll = null;
+let ultimoJSON = "";
+let editando = false;
+const canalNombre = (id) => me.canales.find((c) => c.id === id)?.nombre || id;
+
+// ================= barra superior y router =================
+async function cargarMe() {
+  me = await api("/api/me");
+  document.querySelector("#m-creditos b").textContent = me.creditos ?? "?";
+  document.querySelector("#m-uso b").textContent = `${me.uso.imagenes}/${me.limites.userDailyImages}`;
+  document.getElementById("m-usuario").textContent = me.usuario;
+  document.getElementById("nav-admin").hidden = me.rol !== "admin";
+}
+document.getElementById("salir").addEventListener("click", async () => { await api("/api/logout", { method: "POST" }); location.href = "/login"; });
+
+async function ruta() {
+  clearTimeout(poll); ultimoJSON = ""; editando = false;
+  const [, a = "", id, b] = location.hash.split("/");
+  document.querySelectorAll("#nav a").forEach((n) => n.toggleAttribute("aria-current", n.dataset.r === (a === "ep" || a === "nuevo" ? "" : a)));
+  document.querySelectorAll("#nav a[aria-current]").forEach((n) => n.setAttribute("aria-current", "page"));
+  window.scrollTo(0, 0);
+  try {
+    if (!me) await cargarMe();
+    if (a === "nuevo") return await vistaEditor(null);
+    if (a === "ep" && id && b === "editar") return await vistaEditor(id);
+    if (a === "ep" && id) return await vistaEpisodio(id);
+    if (a === "lote" && id === "nuevo") return await vistaLoteNuevo();
+    if (a === "lote" && id) return await vistaLote(id);
+    if (a === "actores") return await vistaActores();
+    if (a === "admin") return await vistaAdmin();
+    return await vistaInicio();
+  } catch (e) {
+    $app.replaceChildren(h("div", { class: "vacio" }, h("h2", {}, "No se pudo cargar"), h("p", { class: "muted" }, e.message), h("a", { class: "btn", href: "#/" }, "Volver")));
+  }
+}
+window.addEventListener("hashchange", ruta);
+
+// ================= INICIO =================
+async function vistaInicio() {
+  const [lotes, eps] = await Promise.all([api("/api/lotes"), api("/api/episodios")]);
+  const estados = { borrador: ["Borrador", ""], en_cola: ["En cola", "warn"], pensando: ["Generando", "warn"], listo: ["Listo", "ok"], error: ["Con error", "bad"] };
+  $app.replaceChildren(
+    h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Inicio"), h("h1", {}, "¿Qué estrenamos hoy?")),
+      h("div", { class: "row" }, h("a", { class: "btn big", href: "#/nuevo" }, "+ Un episodio"), h("a", { class: "btn primary big", href: "#/lote/nuevo" }, "+ Lote masivo"))),
+    lotes.length ? h("section", { class: "stack", style: { marginBottom: "34px" } }, h("h2", {}, "Lotes"), h("div", { class: "lotes" }, lotes.map(tarjetaLote))) : null,
+    h("section", { class: "stack" }, h("h2", {}, "Episodios sueltos"),
+      eps.length
+        ? h("div", { class: "episodios" }, eps.map((p) => {
+            const [txt, cls] = estados[p.estado] || ["", ""];
+            return h("button", { class: "ep", type: "button", onclick: () => (location.hash = `#/ep/${p.id}`) },
+              h("div", { class: "img" }, p.portada ? h("img", { src: media(p.portada), alt: "", loading: "lazy" }) : "Sin portada todavía"),
+              h("div", { class: "txt" }, h("b", {}, p.titulo),
+                h("div", { class: "row" }, h("span", { class: "tag" }, canalNombre(p.canal)), h("span", { class: `tag ${cls}` }, txt), p.elegida ? h("span", { class: "tag ok" }, "Elegida") : null),
+                h("span", { class: "muted", style: { fontSize: ".78rem" } }, `${p.creado_por} · ${fecha(p.actualizado)}`)));
+          }))
+        : h("div", { class: "vacio" }, h("p", { class: "muted", style: { margin: 0 } }, "Para uno solo usa \"+ Un episodio\". Para muchos, \"+ Lote masivo\"."))));
+}
+
+function barra(total, elegidos, pensando, errores) {
+  const pct = (n) => `${total ? (n / total) * 100 : 0}%`;
+  return h("div", { class: "progreso", role: "img", "aria-label": `${elegidos} de ${total} listos` },
+    h("i", { class: "ok", style: { width: pct(elegidos) } }), h("i", { class: "go", style: { width: pct(Math.max(0, total - elegidos - pensando - errores)) } }), h("i", { class: "bad", style: { width: pct(errores) } }));
+}
+function tarjetaLote(l) {
+  return h("a", { class: "lote", href: `#/lote/${l.id}` },
+    h("div", { class: "stack", style: { gap: "4px" } }, h("b", {}, l.nombre), h("div", { class: "cifras" },
+      h("span", {}, h("b", {}, l.elegidos), ` de ${l.total} listos`),
+      l.pensando ? h("span", {}, h("b", {}, l.pensando), " generando") : null,
+      l.errores ? h("span", { style: { color: "var(--bad)" } }, h("b", {}, l.errores), " con error") : null,
+      h("span", {}, `${canalNombre(l.canal)} · ${l.creado_por} · ${fecha(l.creado)}`))),
+    h("span", { class: "btn small" }, "Abrir"),
+    barra(l.total, l.elegidos, l.pensando, l.errores));
+}
+
+// ================= LOTE NUEVO =================
+async function vistaLoteNuevo() {
+  const st = local.get("gancho-lote") || { nombre: "", canal: me.canales[0]?.id, modelo: "nb2", autoElegir: true, texto: "" };
+  const guardar = () => local.set("gancho-lote", st);
+  const texto = h("textarea", { id: "lote-texto", style: { minHeight: "220px", fontFamily: "ui-monospace, Menlo, monospace", fontSize: ".82rem" },
+    placeholder: "Copia las filas desde Google Sheets o Excel (con la fila de encabezados) y pégalas aquí." });
+  texto.value = st.texto;
+  texto.addEventListener("input", () => { st.texto = texto.value; guardar(); });
+  const archivo = h("input", { type: "file", accept: ".csv,.tsv,.txt", hidden: true, onchange: async () => {
+    const f = archivo.files[0]; if (!f) return;
+    if (f.size > 2.5 * 1024 * 1024) return toast("El archivo es muy grande. Divide el lote.", true);
+    texto.value = await f.text(); st.texto = texto.value; guardar(); toast(`Cargué ${f.name}`);
+  } });
+  const nombre = h("input", { type: "text", id: "lote-nombre", placeholder: "Ej. Semana 41 · CLAC" });
+  nombre.value = st.nombre;
+  nombre.addEventListener("input", () => { st.nombre = nombre.value; guardar(); });
+  const auto = h("input", { type: "checkbox", id: "lote-auto" });
+  auto.checked = st.autoElegir;
+  auto.addEventListener("change", () => { st.autoElegir = auto.checked; guardar(); });
+  const resultado = h("div", { class: "stack" });
+
+  async function revisar() {
+    if (!texto.value.trim()) return toast("Pega primero la lista de episodios.", true);
+    try { pintarRevision(await api("/api/lotes/previsualizar", { method: "POST", body: { texto: texto.value } })); }
+    catch (e) { toast(e.message, true); }
+  }
+  function pintarRevision(r) {
+    if (r.error) return resultado.replaceChildren(h("div", { class: "aviso" }, r.error));
+    const validas = r.filas.filter((f) => !f.errores.length);
+    const imagenes = validas.length * 3;
+    const creditos = imagenes * me.creditosPorImagen;
+    const alcanza = me.creditos == null || me.creditos >= creditos;
+    const quedanHoy = me.limites.userDailyImages - me.uso.imagenes;
+    const lanzar = h("button", { class: "btn primary big", type: "button", disabled: !validas.length || Boolean(r.aviso), onclick: async (e) => {
+      e.currentTarget.disabled = true;
+      try {
+        const l = await api("/api/lotes", { method: "POST", body: { ...st, texto: texto.value } });
+        local.del("gancho-lote"); toast(`Lote creado con ${l.episodios} episodios`); location.hash = `#/lote/${l.id}`;
+      } catch (er) { toast(er.message, true); e.currentTarget.disabled = false; }
+    } }, `Lanzar ${validas.length} episodios`);
+    resultado.replaceChildren(
+      h("div", { class: "kpis" },
+        h("div", { class: "kpi" }, h("span", { class: "muted" }, "Episodios válidos"), h("b", {}, `${validas.length} / ${r.filas.length}`)),
+        h("div", { class: "kpi" }, h("span", { class: "muted" }, "Portadas a generar"), h("b", {}, imagenes)),
+        h("div", { class: `kpi${alcanza ? "" : " alerta"}` }, h("span", { class: "muted" }, "Créditos estimados"), h("b", {}, `≈ ${creditos}`),
+          h("span", { class: "muted", style: { fontSize: ".78rem" } }, alcanza ? `Tienes ${me.creditos ?? "?"}` : `Solo tienes ${me.creditos}. Recarga antes.`)),
+        h("div", { class: `kpi${quedanHoy < imagenes ? " alerta" : ""}` }, h("span", { class: "muted" }, "Te quedan hoy"), h("b", {}, quedanHoy), h("span", { class: "muted", style: { fontSize: ".78rem" } }, "portadas"))),
+      r.aviso ? h("div", { class: "aviso" }, r.aviso) : null,
+      r.desconocidas?.length ? h("div", { class: "aviso" }, `Ignoré estas columnas: ${r.desconocidas.join(", ")}`) : null,
+      h("div", { class: "tw" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["Fila", "Episodio", "Actores", "Revisión"].map((t) => h("th", {}, t)))),
+        h("tbody", {}, r.filas.map((f) => h("tr", { class: f.errores.length ? "malo" : "" },
+          h("td", { class: "num" }, f.fila),
+          h("td", {}, h("b", {}, f.nombre), h("div", { class: "muted", style: { fontSize: ".8rem" } }, f.brief.sinopsis.slice(0, 120) + (f.brief.sinopsis.length > 120 ? "…" : ""))),
+          h("td", {}, f.reparto.length ? h("div", { class: "chips" }, f.reparto.map((a) => h("span", { class: `tag ${a.actorId ? "ok" : "warn"}` }, `${a.personaje}: ${a.actorNombre || "?"}`))) : h("span", { class: "muted" }, "Claude arma el cast")),
+          h("td", {}, [...f.errores.map((x) => h("div", { style: { color: "var(--bad)" } }, x)), ...f.avisos.map((x) => h("div", { class: "muted", style: { fontSize: ".8rem" } }, x))], !f.errores.length && !f.avisos.length ? h("span", { class: "tag ok" }, "Listo") : null)))))),
+      h("div", { class: "row", style: { justifyContent: "flex-end" } }, lanzar));
+    resultado.scrollIntoView({ behavior: "smooth" });
+  }
+
+  $app.replaceChildren(
+    h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Lote masivo"), h("h1", {}, "Muchos episodios de una vez")),
+      h("a", { class: "btn", href: "/api/plantilla.csv" }, "Descargar plantilla")),
+    h("div", { class: "grid2" },
+      h("section", { class: "panel stack" },
+        h("h2", {}, "1. Pega la lista"),
+        h("p", { class: "muted", style: { margin: 0 } }, "Una fila por episodio. Solo la sinopsis es obligatoria; Claude deduce lo demás. En \"actores\" escribe Personaje=Actor separados por punto y coma."),
+        texto,
+        h("div", { class: "row" }, h("button", { class: "btn", type: "button", onclick: () => archivo.click() }, "O sube un CSV"), archivo)),
+      h("section", { class: "panel stack" },
+        h("h2", {}, "2. Ajustes"),
+        h("label", {}, "Nombre del lote", nombre),
+        h("label", {}, "Canal", seg(Object.fromEntries(me.canales.map((c) => [c.id, c.nombre])), st.canal, (v) => { st.canal = v; guardar(); })),
+        h("label", {}, "Modelo de imagen", seg(me.modelos, st.modelo, (v) => { st.modelo = v; guardar(); })),
+        h("label", { class: "switch" }, auto, h("span", {}, "Elegir la mejor automáticamente", h("br"), h("span", { class: "hint" }, "Gancho elige la de mayor calificación y escribe la descripción. Tú solo revisas y cambias las que no te gusten."))),
+        me.refsPublicas ? null : h("div", { class: "aviso" }, "Modo local: Nano Banana no ve las fotos de los actores hasta publicar la app."),
+        h("button", { class: "btn primary big", type: "button", onclick: revisar }, "Revisar lista"))),
+    h("div", { style: { marginTop: "22px" } }, resultado));
+}
+
+// ================= LOTE: revisión rápida =================
+let filtroLote = "todos";
+async function vistaLote(id) {
+  const l = await api(`/api/lotes/${id}`);
+  const json = JSON.stringify(l);
+  if (json !== ultimoJSON) { ultimoJSON = json; pintarLote(l); }
+  const ocupado = l.episodios.some((e) => ["en_cola", "pensando"].includes(e.estado) || e.eligiendo || e.propuestas.some((p) => ["en_cola", "generando"].includes(p.estado) || p.evaluando || p.rehaciendo));
+  if (ocupado) poll = setTimeout(() => vistaLote(id).catch(() => {}), 4000);
+  else cargarMe().catch(() => {});
+}
+
+function pintarLote(l) {
+  const recargar = () => { ultimoJSON = ""; clearTimeout(poll); vistaLote(l.id); };
+  const filtros = {
+    todos: () => true,
+    elegir: (e) => e.estado === "listo" && !e.elegida,
+    errores: (e) => e.estado === "error" || e.propuestas.some((p) => p.estado === "error"),
+    listos: (e) => e.elegida && e.tiene_paquete,
+  };
+  const cuenta = Object.fromEntries(Object.entries(filtros).map(([k, f]) => [k, l.episodios.filter(f).length]));
+  const visibles = l.episodios.filter(filtros[filtroLote]);
+
+  const fila = (e) => {
+    const estado = e.estado === "error" ? h("span", { class: "tag bad" }, "Error")
+      : ["en_cola", "pensando"].includes(e.estado) ? h("span", { class: "tag warn" }, e.estado === "en_cola" ? "En cola" : "Pensando")
+      : e.eligiendo ? h("span", { class: "tag warn" }, "Escribiendo descripción")
+      : e.elegida && e.tiene_paquete ? h("span", { class: "tag ok" }, "Listo") : h("span", { class: "tag" }, "Por elegir");
+    const ops = [0, 1, 2].map((slot) => {
+      const p = e.propuestas.find((x) => x.slot === slot);
+      if (!p) return h("div", { class: "mini-op shimmer" }, h("span", { class: "ph" }, e.estado === "error" ? "—" : "Pensando…"));
+      const nota = p.final ?? p.estimada;
+      const lista = p.estado === "lista";
+      return h("button", { class: `mini-op${e.elegida === p.id ? " elegida" : ""}${lista ? "" : " shimmer"}`, type: "button", disabled: !lista || e.eligiendo,
+        title: lista ? `Elegir: ${p.titulo}` : "", onclick: async () => {
+          try { await api(`/api/propuestas/${p.id}/elegir`, { method: "POST" }); toast("Elegida. Escribiendo descripción…"); recargar(); } catch (er) { toast(er.message, true); }
+        } },
+        lista ? h("img", { src: media(p.mini || p.key), alt: "", loading: "lazy" }) : h("span", { class: "ph" }, p.estado === "error" ? "Falló la imagen" : "Pintando…"),
+        lista ? h("span", { class: "nota", style: { color: colorScore(nota) } }, nota) : null,
+        e.elegida === p.id ? h("span", { class: "check" }, "✓") : null,
+        h("span", { class: "tit" }, p.titulo));
+    });
+    return h("div", { class: `fila${e.elegida && e.tiene_paquete ? " lista" : ""}` },
+      h("div", { class: "info" }, h("span", { class: "muted", style: { fontSize: ".75rem" } }, `#${e.orden + 1}`), h("b", {}, e.titulo),
+        h("div", { class: "row", style: { gap: "6px" } }, estado), e.error ? h("span", { style: { color: "var(--bad)", fontSize: ".8rem" } }, e.error) : null,
+        h("a", { class: "btn small", href: `#/ep/${e.id}` }, "Abrir · rehacer")),
+      h("div", { class: "minis" }, ops));
+  };
+
+  $app.replaceChildren(
+    h("div", { class: "head" },
+      h("div", { class: "stack", style: { gap: "6px" } }, h("div", { class: "eyebrow" }, `Lote · ${canalNombre(l.canal)}`), h("h1", {}, l.nombre),
+        h("div", { class: "cifras" }, h("span", {}, h("b", {}, l.elegidos), ` de ${l.total} listos`), l.pensando ? h("span", {}, h("b", {}, l.pensando), " generando") : null,
+          l.errores ? h("span", { style: { color: "var(--bad)" } }, h("b", {}, l.errores), " con error") : null, l.auto_elegir ? h("span", {}, "Elige solo la mejor") : null)),
+      h("div", { class: "row" },
+        h("button", { class: "btn", type: "button", disabled: !cuenta.elegir, onclick: () => confirmar("¿Elegir la mejor en todos?", `Gancho elige la de mayor calificación en ${cuenta.elegir} episodios y escribe su descripción.`,
+          async () => { const r = await api(`/api/lotes/${l.id}/elegir-mejores`, { method: "POST" }); toast(`Eligiendo ${r.elegidos}`); recargar(); }, "Elegir") }, `Elegir la mejor (${cuenta.elegir})`),
+        h("button", { class: "btn", type: "button", disabled: !cuenta.errores, onclick: async () => {
+          try { const r = await api(`/api/lotes/${l.id}/reintentar`, { method: "POST" }); toast(`Reintentando ${r.episodios} episodios y ${r.imagenes} portadas`); recargar(); } catch (er) { toast(er.message, true); }
+        } }, `Reintentar errores (${cuenta.errores})`),
+        h("button", { class: "btn primary", type: "button", disabled: !cuenta.listos, onclick: () => { toast("Preparando el ZIP…"); descargar(`/api/lotes/${l.id}/exportar.zip`); } }, `Descargar ZIP (${cuenta.listos})`),
+        h("button", { class: "btn ghost danger", type: "button", onclick: () => confirmar("¿Borrar este lote?", "Se borran todos sus episodios y portadas. No se puede deshacer.",
+          async () => { await api(`/api/lotes/${l.id}`, { method: "DELETE" }); location.hash = "#/"; }, "Sí, borrar") }, "Borrar"))),
+    h("div", { style: { marginBottom: "18px" } }, barra(l.total, l.elegidos, l.pensando, l.errores)),
+    h("div", { class: "row", style: { marginBottom: "16px", justifyContent: "space-between" } },
+      seg({ todos: `Todos (${cuenta.todos})`, elegir: `Por elegir (${cuenta.elegir})`, listos: `Listos (${cuenta.listos})`, errores: `Con error (${cuenta.errores})` }, filtroLote, (v) => { filtroLote = v; ultimoJSON = ""; pintarLote(l); }),
+      h("span", { class: "muted", style: { fontSize: ".85rem" } }, "Clic en una portada para elegirla.")),
+    visibles.length ? h("div", { class: "filas" }, visibles.map(fila)) : h("div", { class: "vacio" }, h("p", { class: "muted", style: { margin: 0 } }, "Nada en este filtro.")));
+}
+
+// ================= EDITOR (un episodio) =================
+async function vistaEditor(id) {
+  const actores = await api("/api/actores");
+  const existente = id ? await api(`/api/episodios/${id}`) : null;
+  const borradorKey = "gancho-borrador";
+  const base = existente ? { ...existente.brief, titulo: existente.titulo, canal: existente.canal, modelo: existente.modelo, cast: existente.cast }
+    : local.get(borradorKey) || { canal: me.canales[0]?.id, modelo: "nb2", cast: [{ personaje: "", rol: "transgresor" }, { personaje: "", rol: "testigo" }] };
+  const st = structuredClone(base);
+  st.cast = (st.cast || []).map((c) => ({ ...c }));
+  const guardarBorrador = () => { if (!existente) local.set(borradorKey, st); };
+
+  const campo = (k, etiqueta, hint, area = false, ph = "") => {
+    const input = area ? h("textarea", { id: `f-${k}`, placeholder: ph }) : h("input", { type: "text", id: `f-${k}`, placeholder: ph });
+    input.value = st[k] || "";
+    input.addEventListener("input", () => { st[k] = input.value; guardarBorrador(); });
+    return h("label", {}, h("span", {}, etiqueta), hint && h("span", { class: "hint" }, hint), input);
+  };
+
+  const castBox = h("div", { class: "cast" });
+  function pintarCast() {
+    castBox.replaceChildren(...st.cast.map((c, i) => {
+      const actor = actores.find((a) => a.id === c.actorId);
+      const inp = (k, ph, label) => { const el = h("input", { type: "text", placeholder: ph, "aria-label": label }); el.value = c[k] || ""; el.addEventListener("input", () => { c[k] = el.value; guardarBorrador(); }); return el; };
+      return h("div", { class: "castrow" },
+        h("div", { class: "r1" },
+          actor?.fotos?.length ? h("img", { class: "avatar", src: media(actor.fotos[0]), alt: actor.nombre }) : h("div", { class: "avatar" }, "Sin foto"),
+          h("div", { class: "stack", style: { gap: "4px" } }, h("b", {}, actor ? actor.nombre : "Elige quién lo interpreta"),
+            h("button", { class: "btn small", type: "button", onclick: () => elegirActor(c) }, actor ? "Cambiar actor" : "Elegir actor o subir fotos")),
+          h("button", { class: "btn small ghost danger", type: "button", "aria-label": "Quitar personaje", onclick: () => { st.cast.splice(i, 1); guardarBorrador(); pintarCast(); } }, "Quitar")),
+        h("div", { class: "r2" }, inp("personaje", "Personaje (ej. Elena)", "Nombre del personaje"), inp("edad", "Edad", "Edad")),
+        seg(ROLES, c.rol, (v) => { c.rol = v; guardarBorrador(); }),
+        inp("vestuario", "Vestuario (ej. vestido de novia, uniforme de sirvienta)", "Vestuario"));
+    }), h("button", { class: "btn", type: "button", onclick: () => { st.cast.push({ personaje: "", rol: "otro" }); pintarCast(); } }, "+ Agregar personaje"));
+  }
+  function elegirActor(c) {
+    abrirModal(
+      h("h2", {}, "¿Quién lo interpreta?"),
+      actores.length ? h("div", { class: "biblio" }, actores.map((a) => h("button", { class: "actor", type: "button", "aria-pressed": String(c.actorId === a.id),
+        onclick: () => { c.actorId = a.id; guardarBorrador(); cerrarModal(); pintarCast(); } },
+        a.fotos[0] ? h("img", { src: media(a.fotos[0]), alt: "" }) : h("div", { class: "avatar" }, "Sin foto"), h("span", {}, a.nombre)))) : h("p", { class: "muted" }, "Todavía no hay actores. Sube el primero abajo."),
+      h("hr", { style: { border: 0, borderTop: "1px solid var(--line)", width: "100%" } }),
+      formNuevoActor((a) => { actores.unshift(a); c.actorId = a.id; guardarBorrador(); cerrarModal(); pintarCast(); }),
+      h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cerrar")));
+  }
+
+  const btnGenerar = h("button", { class: "btn primary big", type: "submit" }, existente?.propuestas?.length ? "Guardar y generar 3 nuevas" : "Generar 3 propuestas");
+  async function enviar(generarYa) {
+    st.cast = st.cast.filter((c) => c.personaje?.trim());
+    btnGenerar.disabled = true;
+    try {
+      const ep = existente ? await api(`/api/episodios/${existente.id}`, { method: "PUT", body: st }) : await api("/api/episodios", { method: "POST", body: st });
+      local.del(borradorKey);
+      if (generarYa) await api(`/api/episodios/${ep.id}/generar`, { method: "POST" });
+      location.hash = `#/ep/${ep.id}`;
+    } catch (e) { toast(e.message, true); btnGenerar.disabled = false; }
+  }
+
+  pintarCast();
+  $app.replaceChildren(h("form", { class: "stack", style: { gap: "22px" }, onsubmit: (e) => { e.preventDefault(); enviar(true); } },
+    h("div", { class: "head", style: { marginBottom: 0 } },
+      h("div", {}, h("div", { class: "eyebrow" }, existente ? "Editar episodio" : "Nuevo episodio"), h("h1", {}, existente ? existente.titulo : "Cuéntame la historia")),
+      h("a", { class: "btn ghost", href: existente ? `#/ep/${existente.id}` : "#/" }, "Cancelar")),
+    h("div", { class: "grid2" },
+      h("section", { class: "panel stack" },
+        h("h2", {}, "1. La historia"),
+        h("label", {}, "Canal", seg(Object.fromEntries(me.canales.map((c) => [c.id, c.nombre])), st.canal, (v) => { st.canal = v; guardarBorrador(); })),
+        campo("titulo", "Nombre interno", "Solo para encontrarlo aquí. No es el título de YouTube.", false, "Ej. La boda de Lucía"),
+        campo("sinopsis", "Sinopsis", "De qué trata, en 5 a 10 líneas. Es lo único obligatorio.", true),
+        campo("giro", "El giro principal", "Opcional: si lo dejas vacío, Claude lo deduce.", true, "Ej. Su hermana se fuga con el novio el día de la boda"),
+        campo("momento", "El momento más fuerte", "La escena que iría en la portada.", true, "Ej. La novia llorando sola en el piso de la iglesia"),
+        campo("desenlace", "Cómo termina", "Gancho lo usa para entender la historia, pero nunca lo revela.", true),
+        campo("escenario", "Escenario principal", null, false, "Iglesia, camión, escuela, mansión…"),
+        campo("notas", "Notas para Gancho", "Ej. evitar armas, la protagonista siempre de rojo.", true),
+        h("label", {}, "Modelo de imagen", seg(me.modelos, st.modelo, (v) => { st.modelo = v; guardarBorrador(); }), h("span", { class: "hint" }, "Nano Banana 2 es más rápido. Pro respeta mejor varias caras a la vez."))),
+      h("section", { class: "panel stack" },
+        h("h2", {}, "2. El cast"),
+        h("p", { class: "muted", style: { margin: 0 } }, "Si lo dejas vacío, Claude arma los personajes desde la sinopsis (sin caras reales)."),
+        me.refsPublicas ? null : h("div", { class: "aviso" }, "Modo local: Nano Banana no ve las fotos de los actores hasta publicar la app."),
+        castBox)),
+    h("div", { class: "row", style: { justifyContent: "flex-end" } },
+      existente ? h("button", { class: "btn big", type: "button", onclick: () => enviar(false) }, "Solo guardar") : null, btnGenerar)));
+}
+
+function formNuevoActor(alGuardar) {
+  let archivos = [];
+  const nombre = h("input", { type: "text", placeholder: "Nombre del actor o actriz", "aria-label": "Nombre del actor" });
+  const input = h("input", { type: "file", accept: "image/jpeg,image/png,image/webp", multiple: true, hidden: true });
+  const previews = h("div", { class: "previews" });
+  const drop = h("div", { class: "drop", tabindex: "0", role: "button", onclick: () => input.click(),
+    onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } } },
+    "Arrastra las fotos aquí o haz clic", h("br"), h("small", {}, "Frente, 3/4 y cuerpo completo · JPG, PNG o WEBP · máx. 8"));
+  const agregar = (files) => {
+    const nuevas = [...files].filter((f) => /image\/(jpeg|png|webp)/.test(f.type));
+    const grandes = nuevas.filter((f) => f.size > 8 * 1024 * 1024);
+    if (grandes.length) toast(`${grandes.length} foto(s) pesan más de 8 MB.`, true);
+    archivos = [...archivos, ...nuevas.filter((f) => f.size <= 8 * 1024 * 1024)].slice(0, 8);
+    previews.replaceChildren(...archivos.map((f) => h("img", { src: URL.createObjectURL(f), alt: "" })));
+  };
+  input.addEventListener("change", () => agregar(input.files));
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("on"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("on"));
+  drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("on"); agregar(e.dataTransfer.files); });
+  const btn = h("button", { class: "btn primary", type: "button", onclick: async () => {
+    if (!nombre.value.trim()) return toast("Escribe el nombre del actor.", true);
+    if (!archivos.length) return toast("Agrega al menos una foto.", true);
+    const fd = new FormData();
+    fd.append("nombre", nombre.value.trim());
+    archivos.forEach((f) => fd.append("fotos", f));
+    btn.disabled = true; btn.textContent = "Subiendo…";
+    try { alGuardar(await api("/api/actores", { method: "POST", form: fd })); toast("Actor guardado"); }
+    catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = "Guardar actor"; }
+  } }, "Guardar actor");
+  return h("div", { class: "stack" }, h("h3", {}, "Nuevo actor"), nombre, drop, input, previews, h("div", { class: "row", style: { justifyContent: "flex-end" } }, btn));
+}
+
+// ================= EPISODIO =================
+async function vistaEpisodio(id) {
+  const p = await api(`/api/episodios/${id}`);
+  const json = JSON.stringify(p);
+  if (json !== ultimoJSON && !editando) { ultimoJSON = json; pintarEpisodio(p); }
+  const ocupado = ["en_cola", "pensando"].includes(p.estado) || p.eligiendo || p.propuestas.some(OCUPADA);
+  if (ocupado) poll = setTimeout(() => vistaEpisodio(id).catch(() => {}), 3000);
+  else cargarMe().catch(() => {});
+}
+
+function pintarEpisodio(p) {
+  const recargar = () => { ultimoJSON = ""; clearTimeout(poll); vistaEpisodio(p.id); };
+  const generar = async () => { try { await api(`/api/episodios/${p.id}/generar`, { method: "POST" }); recargar(); } catch (e) { toast(e.message, true); } };
+  const pensando = ["en_cola", "pensando"].includes(p.estado);
+  const partes = [h("div", { class: "head" },
+    h("div", {}, h("div", { class: "eyebrow" }, p.lote_id ? h("a", { href: `#/lote/${p.lote_id}`, style: { color: "inherit" } }, `← Lote · ${canalNombre(p.canal)}`) : canalNombre(p.canal)), h("h1", {}, p.titulo)),
+    h("div", { class: "row" },
+      h("a", { class: "btn", href: `#/ep/${p.id}/editar` }, "Editar historia y cast"),
+      p.propuestas.length ? h("button", { class: "btn", type: "button", disabled: pensando, onclick: generar }, "3 propuestas nuevas") : null,
+      h("button", { class: "btn ghost danger", type: "button", onclick: () => confirmar("¿Borrar este episodio?", "Se borran las portadas y versiones. No se puede deshacer.",
+        async () => { await api(`/api/episodios/${p.id}`, { method: "DELETE" }); location.hash = p.lote_id ? `#/lote/${p.lote_id}` : "#/"; }, "Sí, borrar") }, "Borrar")))];
+
+  if (pensando) {
+    partes.push(h("div", { class: "vacio" }, h("div", { class: "spin" }), h("h2", {}, p.estado === "en_cola" ? "En la fila" : "Claude está leyendo la historia"),
+      h("p", { class: "muted", style: { margin: 0 } }, p.estado === "en_cola" ? "Empieza en cuanto se libere un lugar." : "Arma 3 propuestas en alrededor de un minuto; después las portadas se pintan solas.")));
+  } else if (p.estado === "error") {
+    partes.push(h("div", { class: "vacio" }, h("h2", {}, "No se pudieron crear las propuestas"), h("p", { class: "muted" }, p.error || ""), h("button", { class: "btn primary", type: "button", onclick: generar }, "Intentar de nuevo")));
+  } else if (!p.propuestas.length) {
+    partes.push(h("div", { class: "vacio" }, h("h2", {}, "Listo para generar"), h("button", { class: "btn primary big", type: "button", onclick: generar }, "Generar 3 propuestas")));
+  }
+  if (p.gancho && !pensando) {
+    const g = p.gancho;
+    partes.push(h("details", { style: { marginBottom: "20px" } }, h("summary", { class: "eyebrow", style: { cursor: "pointer", marginBottom: "10px" } }, "El gancho que encontró Claude"),
+      h("div", { class: "gancho" }, [["Transgresión", g.transgresion], ["Testigo / víctima", g.testigo], ["Objeto clave", g.objeto], ["Escenario", g.escenario], ["Final que se oculta", g.final_oculto]]
+        .map(([k, v]) => h("div", {}, h("div", { class: "eyebrow" }, k), h("p", {}, v))))));
+  }
+  if (p.propuestas.length && !pensando) partes.push(h("div", { class: "props" }, p.propuestas.map((x, i) => tarjeta(p, x, i, recargar))));
+  if (p.eligiendo) partes.push(h("div", { class: "vacio", style: { marginTop: "24px" } }, h("div", { class: "spin" }), h("p", { class: "muted", style: { margin: 0 } }, "Escribiendo descripción, tags y títulos A/B…")));
+  else if (p.paquete && p.elegida) partes.push(paqueteFinal(p));
+  $app.replaceChildren(...partes);
+}
+
+function tarjeta(p, x, i, recargar) {
+  const img = x.imagen || {};
+  const ev = x.evaluacion;
+  const total = ev ? ev.calificacion_final : x.calificacion.total;
+  const elegida = p.elegida === x.id;
+
+  let lienzo;
+  if (x.rehaciendo && x.rehaciendo !== "titulo") {
+    lienzo = h("div", { class: "lienzo shimmer" }, h("div", { class: "estado" }, h("div", { class: "spin" }), "Rehaciendo con tus comentarios…"));
+  } else if (img.estado === "lista") {
+    lienzo = h("div", { class: "lienzo" }, h("img", { src: media(img.key), alt: x.concepto, onclick: () => verGrande(media(img.key)) }));
+  } else if (img.estado === "error") {
+    lienzo = h("div", { class: "lienzo" }, h("div", { class: "estado" }, h("b", { style: { color: "var(--bad)" } }, img.error || "La imagen falló."),
+      h("button", { class: "btn small", type: "button", onclick: async (e) => { e.currentTarget.disabled = true; try { await api(`/api/propuestas/${x.id}/reintentar`, { method: "POST" }); recargar(); } catch (er) { toast(er.message, true); } } }, "Reintentar imagen")));
+  } else {
+    const s = img.inicio ? Math.round((Date.now() - img.inicio) / 1000) : 0;
+    lienzo = h("div", { class: "lienzo shimmer" }, h("div", { class: "estado" }, h("div", { class: "spin" }),
+      x.autoReintento ? "La primera versión tenía defectos. Pintando otra…" : img.estado === "en_cola" ? "En la fila…" : "Pintando la portada…",
+      s ? h("small", {}, `${s} s · suele tardar 30 a 90 s`) : null));
+  }
+
+  const titulo = h("div", { class: "titulo", tabindex: "0", title: "Clic para editar" }, x.titulo);
+  const cuenta = h("span", { class: `count${x.titulo.length > 70 ? " warn" : ""}` }, `${x.titulo.length}/100${x.titulo.length > 70 ? " · en celular se corta después de ~70" : ""}`);
+  titulo.addEventListener("click", () => { if (titulo.isContentEditable) return; editando = true; titulo.contentEditable = "true"; titulo.focus(); document.getSelection().selectAllChildren(titulo); });
+  titulo.addEventListener("input", () => { const n = titulo.textContent.length; cuenta.textContent = `${n}/100`; cuenta.className = `count${n > 70 ? " warn" : ""}`; });
+  titulo.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); titulo.blur(); } if (e.key === "Escape") { titulo.textContent = x.titulo; titulo.blur(); } });
+  titulo.addEventListener("blur", async () => {
+    titulo.contentEditable = "false"; editando = false;
+    const nuevo = titulo.textContent.trim().slice(0, 100);
+    if (!nuevo || nuevo === x.titulo) { titulo.textContent = x.titulo; return; }
+    try { await api(`/api/propuestas/${x.id}`, { method: "PATCH", body: { titulo: nuevo } }); toast("Título guardado"); recargar(); }
+    catch (e) { toast(e.message, true); titulo.textContent = x.titulo; }
+  });
+
+  const c = x.calificacion;
+  const caras = ev ? { si: ["Caras: coinciden", "ok"], parcial: ["Caras: se parecen poco", "warn"], no: ["Caras: no coinciden", "bad"] }[ev.caras_coinciden] || null : null;
+  const razones = ev?.porque_funciona?.length ? ev.porque_funciona : x.porque_funciona;
+  const movil = h("div", { class: "movil", "aria-label": "Así se ve en el celular" },
+    h("div", { class: "mini" }, img.estado === "lista" ? h("img", { src: media(img.mini || img.key), alt: "" }) : null),
+    h("div", {}, h("div", { class: "t" }, x.titulo), h("div", { class: "c" }, `${canalNombre(p.canal)} · 1.2 M de vistas`)));
+
+  return h("article", { class: `card${elegida ? " elegida" : ""}` },
+    lienzo,
+    h("div", { class: "body" },
+      h("div", { class: "row", style: { gap: "6px" } }, h("span", { class: "tag" }, `Opción ${i + 1}`), x.version > 1 ? h("span", { class: "tag" }, `v${x.version}`) : null,
+        caras ? h("span", { class: `tag ${caras[1]}` }, caras[0]) : null, x.editadoAMano ? h("span", { class: "tag" }, "Título editado") : null),
+      h("div", { class: "stack", style: { gap: "4px" } }, x.rehaciendo === "titulo" ? h("div", { class: "row muted" }, h("div", { class: "spin" }), "Rehaciendo el título…") : titulo, cuenta),
+      h("div", { class: "score" },
+        h("div", { class: "ring", style: { "--v": total, "--c": colorScore(total) }, role: "img", "aria-label": `Calificación ${total} de 100` }, h("b", {}, total)),
+        h("div", { class: "stack", style: { gap: "6px" } },
+          h("div", { class: "row", style: { gap: "6px" } }, h("b", { style: { color: colorScore(total) } }, etiquetaScore(total)),
+            x.evaluando ? h("span", { class: "tag" }, "Revisando imagen…") : ev ? h("span", { class: "tag ok" }, "Revisada con la imagen") : h("span", { class: "tag" }, "Estimada")),
+          h("div", { class: "bars" }, [["Tabú", c.tabu], ["Especificidad", c.especificidad], ["Misterio", c.misterio], ["Claridad visual", c.claridad_visual]]
+            .map(([k, v]) => h("div", { class: "bar" }, h("span", {}, k), h("i", { style: { "--v": v } }), h("span", {}, v)))))),
+      h("div", {}, h("div", { class: "eyebrow", style: { marginBottom: "6px" } }, "Por qué va a funcionar"), h("ul", { class: "why" }, razones.slice(0, 3).map((r) => h("li", {}, r)))),
+      x.errorRehacer ? h("div", { class: "probs" }, x.errorRehacer) : null,
+      h("div", { class: "acciones" },
+        h("button", { class: `btn ${elegida ? "" : "primary"} full`, type: "button", disabled: img.estado !== "lista" || Boolean(x.rehaciendo) || p.eligiendo,
+          onclick: async (e) => { e.currentTarget.disabled = true; try { await api(`/api/propuestas/${x.id}/elegir`, { method: "POST" }); recargar(); } catch (er) { toast(er.message, true); e.currentTarget.disabled = false; } } },
+          elegida ? "✓ Elegida · regenerar textos" : "Elegir esta"),
+        h("button", { class: "btn", type: "button", disabled: Boolean(x.rehaciendo), onclick: () => rehacer(x, recargar) }, x.rehaciendo ? "Rehaciendo…" : "Rehacer"),
+        h("button", { class: "btn", type: "button", disabled: !x.nVersiones, onclick: () => versiones(x, recargar) }, `Versiones${x.nVersiones ? ` (${x.nVersiones})` : ""}`)),
+      h("details", {}, h("summary", { class: "eyebrow", style: { cursor: "pointer" } }, "Más detalles"),
+        h("div", { class: "stack", style: { marginTop: "10px", gap: "10px" } }, movil,
+          ev?.problemas?.length ? h("div", { class: "risk" }, h("b", {}, "Para mejorar: "), ev.problemas.slice(0, 2).join(" · ")) : null,
+          h("div", { class: "risk" }, h("b", {}, "Riesgo: "), x.riesgo),
+          h("div", { class: "row", style: { gap: "6px" } }, h("span", { class: "tag" }, x.composicion), h("span", { class: "tag" }, `Fórmula ${x.formula}`))))));
+}
+
+function rehacer(x, recargar) {
+  const st = { objetivo: "portada", razones: new Set() };
+  const chips = h("div", { class: "chips" });
+  const pintarChips = () => {
+    const lista = st.objetivo === "titulo" ? RAZONES.titulo : st.objetivo === "portada" ? RAZONES.portada : [...RAZONES.portada, ...RAZONES.titulo];
+    for (const r of [...st.razones]) if (!lista.includes(r)) st.razones.delete(r);
+    chips.replaceChildren(...lista.map((r) => h("button", { class: "chip", type: "button", "aria-pressed": String(st.razones.has(r)),
+      onclick: (e) => { st.razones.has(r) ? st.razones.delete(r) : st.razones.add(r); e.currentTarget.setAttribute("aria-pressed", String(st.razones.has(r))); } }, r)));
+  };
+  const comentario = h("textarea", { id: "rehacer-comentario", placeholder: "Ej. Que la esposa se vea más destrozada y que el amante sea más joven" });
+  const btn = h("button", { class: "btn primary", type: "button", onclick: async () => {
+    if (!st.razones.size && !comentario.value.trim()) return toast("Elige una razón o escribe qué cambiarías.", true);
+    btn.disabled = true;
+    try {
+      await api(`/api/propuestas/${x.id}/rehacer`, { method: "POST", body: { objetivo: st.objetivo, razones: [...st.razones], comentario: comentario.value } });
+      cerrarModal(); toast("Rehaciendo. Gancho recordará lo que no te gustó."); recargar();
+    } catch (e) { toast(e.message, true); btn.disabled = false; }
+  } }, "Rehacer con esto");
+  pintarChips();
+  abrirModal(h("h2", {}, "¿Qué no te gustó?"), h("p", { class: "muted", style: { margin: 0 } }, `"${x.titulo}"`),
+    h("label", {}, "¿Qué rehago?", seg({ portada: "La portada", titulo: "El título", ambos: "Las dos" }, st.objetivo, (v) => { st.objetivo = v; pintarChips(); })),
+    h("div", { class: "stack", style: { gap: "8px" } }, h("b", { style: { fontSize: ".88rem" } }, "¿Por qué?"), chips),
+    h("label", {}, "¿Qué cambiarías?", h("span", { class: "hint" }, "Entre más concreto, mejor sale la siguiente."), comentario),
+    h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cancelar"), btn));
+}
+
+async function versiones(x, recargar) {
+  const vs = await api(`/api/propuestas/${x.id}/versiones`);
+  abrirModal(h("h2", {}, "Versiones anteriores"),
+    h("div", { class: "versiones" }, vs.map((v) => h("div", { class: "version" },
+      v.imagen?.key ? h("img", { src: media(v.imagen.mini || v.imagen.key), alt: "", onclick: () => verGrande(media(v.imagen.key)) }) : h("div", { class: "ph" }),
+      h("div", { class: "stack", style: { gap: "6px" } }, h("b", {}, v.data.titulo),
+        v.feedback ? h("span", { class: "muted", style: { fontSize: ".82rem" } }, `No gustó (${v.feedback.objetivo}): ${[...(v.feedback.razones || []), v.feedback.comentario].filter(Boolean).join(" · ")}`) : null,
+        h("div", {}, h("button", { class: "btn small", type: "button", onclick: async () => {
+          try { await api(`/api/propuestas/${x.id}/restaurar`, { method: "POST", body: { versionId: v.id } }); cerrarModal(); toast("Versión restaurada"); recargar(); } catch (e) { toast(e.message, true); }
+        } }, "Volver a esta")))))),
+    h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cerrar")));
+}
+
+function paqueteFinal(p) {
+  const x = p.propuestas.find((y) => y.id === p.elegida);
+  const k = p.paquete;
+  if (!x) return null;
+  const tags = k.tags.join(", ");
+  const caja = (titulo, valor, extra) => h("div", { class: "copybox" },
+    h("div", { class: "row" }, h("b", {}, titulo), h("div", { class: "row", style: { gap: "8px" } }, extra, h("button", { class: "btn small", type: "button", onclick: () => copiar(valor) }, "Copiar"))),
+    titulo === "Descripción" ? h("textarea", { readonly: true, id: "desc-final" }, valor) : h("div", { class: "val" }, valor));
+  const tieneLogo = me.canales.find((c) => c.id === p.canal)?.logo;
+  return h("section", { id: "paquete", class: "panel stack", style: { marginTop: "28px", gap: "18px" } },
+    h("div", { class: "head", style: { marginBottom: 0 } }, h("div", {}, h("div", { class: "eyebrow" }, "Paquete final"), h("h2", {}, "Listo para subir a YouTube")),
+      k.desactualizado ? h("span", { class: "tag warn" }, "Editaste el título: dale \"regenerar textos\"") : null),
+    h("div", { class: "final" },
+      h("div", { class: "stack" }, h("img", { src: media(x.imagen.key), alt: "Portada elegida", style: { borderRadius: "12px", width: "100%" } }),
+        h("div", { class: "row" }, h("button", { class: "btn primary", type: "button", onclick: () => descargar(`/api/episodios/${p.id}/portada.jpg`) }, "Descargar portada 1280×720")),
+        h("p", { class: "muted", style: { margin: 0, fontSize: ".82rem" } }, tieneLogo ? "Incluye el logo del canal abajo a la izquierda." : "Este canal no tiene logo. Un administrador lo puede subir en Administración.")),
+      h("div", { class: "stack" },
+        caja("Título", x.titulo, h("span", { class: "count" }, `${x.titulo.length}/100`)),
+        h("div", { class: "copybox" }, h("b", {}, "Títulos para la prueba A/B de YouTube"),
+          ...(k.titulos_alternos || []).map((t) => h("div", { class: "row", style: { justifyContent: "space-between", flexWrap: "nowrap" } }, h("div", { class: "val", style: { flex: 1 } }, t), h("button", { class: "btn small", type: "button", onclick: () => copiar(t) }, "Copiar")))),
+        caja("Descripción", k.descripcion),
+        caja("Tags", tags, h("span", { class: `count${tags.length > 500 ? " warn" : ""}` }, `${tags.length}/500`)),
+        caja("Hashtags", k.hashtags.join(" ")))));
+}
+
+// ================= ACTORES =================
+async function vistaActores() {
+  const actores = await api("/api/actores");
+  const recargar = () => vistaActores();
+  const card = (a) => {
+    const input = h("input", { type: "file", accept: "image/jpeg,image/png,image/webp", multiple: true, hidden: true, onchange: async () => {
+      const fd = new FormData(); [...input.files].forEach((f) => fd.append("fotos", f));
+      try { await api(`/api/actores/${a.id}/fotos`, { method: "POST", form: fd }); toast("Fotos agregadas"); recargar(); } catch (e) { toast(e.message, true); }
+    } });
+    return h("div", { class: "actor-card" },
+      h("div", { class: "row", style: { justifyContent: "space-between" } }, h("b", {}, a.nombre), h("span", { class: `tag ${a.fotos.length >= 2 ? "ok" : "warn"}` }, `${a.fotos.length} foto${a.fotos.length === 1 ? "" : "s"}`)),
+      h("div", { class: "fotos" }, a.fotos.map((k) => h("div", {}, h("img", { src: media(k), alt: "", onclick: () => verGrande(media(k)) }),
+        h("button", { type: "button", "aria-label": "Quitar foto", onclick: async () => { try { await api(`/api/actores/${a.id}`, { method: "PATCH", body: { quitarFotos: [k] } }); recargar(); } catch (e) { toast(e.message, true); } } }, "×")))),
+      h("div", { class: "row" }, h("button", { class: "btn small", type: "button", onclick: () => input.click() }, "+ Fotos"), input,
+        h("button", { class: "btn small ghost danger", type: "button", onclick: () => confirmar(`¿Borrar a ${a.nombre}?`, "Se borran sus fotos. Los episodios ya hechos no cambian.",
+          async () => { await api(`/api/actores/${a.id}`, { method: "DELETE" }); recargar(); }, "Sí, borrar") }, "Borrar")));
+  };
+  $app.replaceChildren(
+    h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Biblioteca"), h("h1", {}, "Actores")),
+      h("button", { class: "btn primary big", type: "button", onclick: () => abrirModal(formNuevoActor(() => { cerrarModal(); recargar(); }),
+        h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cerrar"))) }, "+ Actor")),
+    h("p", { class: "muted", style: { marginTop: 0 } }, "Para que las caras salgan parecidas: 2 a 5 fotos por actor, con buena luz, de frente y de 3/4. En el lote escribe el nombre igual que aquí."),
+    actores.length ? h("div", { class: "actores" }, actores.map(card)) : h("div", { class: "vacio" }, h("p", { class: "muted", style: { margin: 0 } }, "Todavía no hay actores.")));
+}
+
+// ================= ADMINISTRACIÓN =================
+async function vistaAdmin() {
+  if (me.rol !== "admin") { location.hash = "#/"; return; }
+  const [uso, usuarios, canales] = await Promise.all([api("/api/admin/uso"), api("/api/admin/usuarios"), api("/api/canales")]);
+  const recargar = () => vistaAdmin();
+  const hoy = uso.dias.filter((d) => d.dia === new Date().toISOString().slice(0, 10)).reduce((s, d) => s + d.imagenes, 0);
+  const porEstado = Object.fromEntries(uso.estados.map((e) => [e.estado, e.n]));
+  const portadasQueAlcanzan = uso.creditos != null ? Math.floor(uso.creditos / uso.creditosPorImagen) : null;
+
+  const nuevoUsuario = () => {
+    const u = h("input", { type: "text", placeholder: "usuario", id: "nu-usuario" });
+    const c = h("input", { type: "password", placeholder: "mínimo 10 caracteres", id: "nu-clave", autocomplete: "new-password" });
+    let rol = "editor";
+    abrirModal(h("h2", {}, "Nuevo usuario"), h("label", {}, "Usuario", u), h("label", {}, "Contraseña", c),
+      h("label", {}, "Rol", seg({ editor: "Editor", admin: "Administrador" }, rol, (v) => (rol = v))),
+      h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cancelar"),
+        h("button", { class: "btn primary", type: "button", onclick: async () => {
+          try { await api("/api/admin/usuarios", { method: "POST", body: { usuario: u.value, clave: c.value, rol } }); cerrarModal(); toast("Usuario creado"); recargar(); } catch (e) { toast(e.message, true); }
+        } }, "Crear")));
+  };
+  const cambiarClave = (usr) => {
+    const c = h("input", { type: "password", placeholder: "mínimo 10 caracteres", autocomplete: "new-password" });
+    abrirModal(h("h2", {}, `Nueva contraseña para ${usr.usuario}`), c, h("p", { class: "muted", style: { margin: 0 } }, "Cierra sus sesiones abiertas."),
+      h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cancelar"),
+        h("button", { class: "btn primary", type: "button", onclick: async () => {
+          try { await api(`/api/admin/usuarios/${usr.id}`, { method: "PATCH", body: { clave: c.value } }); cerrarModal(); toast("Contraseña cambiada"); } catch (e) { toast(e.message, true); }
+        } }, "Guardar")));
+  };
+  const editarCanal = (cn) => {
+    const st = { id: cn?.id || "", nombre: cn?.nombre || "", voz: cn?.voz || "", descripcion_fija: cn?.descripcion_fija || "", disclaimer: cn?.disclaimer || "", hashtags: (cn?.hashtags_base || []).join(" ") };
+    const f = (k, label, area, hint) => { const el = area ? h("textarea", {}) : h("input", { type: "text" }); el.value = st[k]; el.addEventListener("input", () => (st[k] = el.value)); return h("label", {}, label, hint ? h("span", { class: "hint" }, hint) : null, el); };
+    const logo = h("input", { type: "file", accept: "image/png", hidden: true, onchange: async () => {
+      const fd = new FormData(); fd.append("logo", logo.files[0]);
+      try { await api(`/api/admin/canales/${cn.id}/logo`, { method: "POST", form: fd }); toast("Logo guardado"); me = null; await cargarMe(); } catch (e) { toast(e.message, true); }
+    } });
+    abrirModal(h("h2", {}, cn ? `Canal: ${cn.nombre}` : "Nuevo canal"),
+      cn ? null : f("id", "Código", false, "Corto, sin espacios. Ej. CLAC"),
+      f("nombre", "Nombre"), f("voz", "Voz de los títulos", true, "Ej. Primera persona, confesión, traición doble."),
+      f("descripcion_fija", "Texto fijo de la descripción", true), f("disclaimer", "Disclaimer", true), f("hashtags", "Hashtags fijos", false, "Separados por espacio. Ej. #AndyTorres #Prismaticoos"),
+      cn ? h("div", { class: "row" }, h("button", { class: "btn", type: "button", onclick: () => logo.click() }, cn.logo_key ? "Cambiar logo (PNG)" : "Subir logo (PNG)"), logo,
+        cn.logo_key ? h("img", { src: media(cn.logo_key), alt: "Logo", style: { height: "40px", background: "#333", padding: "4px", borderRadius: "6px" } }) : null) : null,
+      h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cancelar"),
+        h("button", { class: "btn primary", type: "button", onclick: async () => {
+          try { await api(`/api/admin/canales/${encodeURIComponent(st.id || "X")}`, { method: "PUT", body: st }); cerrarModal(); toast("Canal guardado"); me = null; await cargarMe(); recargar(); } catch (e) { toast(e.message, true); }
+        } }, "Guardar")));
+  };
+
+  $app.replaceChildren(
+    h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Administración"), h("h1", {}, "Equipo, canales y gasto"))),
+    h("div", { class: "kpis", style: { marginBottom: "28px" } },
+      h("div", { class: `kpi${portadasQueAlcanzan != null && portadasQueAlcanzan < 30 ? " alerta" : ""}` }, h("span", { class: "muted" }, "Créditos Nano Banana"), h("b", {}, uso.creditos ?? "?"),
+        portadasQueAlcanzan != null ? h("span", { class: "muted", style: { fontSize: ".78rem" } }, `Alcanzan para ≈ ${portadasQueAlcanzan} portadas`) : null),
+      h("div", { class: "kpi" }, h("span", { class: "muted" }, "Portadas hoy (equipo)"), h("b", {}, hoy), h("span", { class: "muted", style: { fontSize: ".78rem" } }, `Límite ${me.limites.orgDailyImages}`)),
+      h("div", { class: "kpi" }, h("span", { class: "muted" }, "Pintándose ahora"), h("b", {}, (porEstado.generando || 0) + (porEstado.en_cola || 0))),
+      h("div", { class: "kpi" }, h("span", { class: "muted" }, "Fallidas (48 h)"), h("b", {}, porEstado.error || 0))),
+    h("section", { class: "stack", style: { marginBottom: "28px" } },
+      h("div", { class: "row", style: { justifyContent: "space-between" } }, h("h2", {}, "Usuarios"), h("button", { class: "btn", type: "button", onclick: nuevoUsuario }, "+ Usuario")),
+      h("div", { class: "tw" }, h("table", {}, h("thead", {}, h("tr", {}, ["Usuario", "Rol", "Estado", ""].map((t) => h("th", {}, t)))),
+        h("tbody", {}, usuarios.map((u) => h("tr", {},
+          h("td", {}, h("b", {}, u.usuario)),
+          h("td", {}, u.rol === "admin" ? "Administrador" : "Editor"),
+          h("td", {}, h("span", { class: `tag ${u.activo ? "ok" : "bad"}` }, u.activo ? "Activo" : "Sin acceso")),
+          h("td", {}, h("div", { class: "row", style: { gap: "6px" } },
+            h("button", { class: "btn small", type: "button", onclick: () => cambiarClave(u) }, "Contraseña"),
+            h("button", { class: "btn small", type: "button", onclick: async () => { try { await api(`/api/admin/usuarios/${u.id}`, { method: "PATCH", body: { rol: u.rol === "admin" ? "editor" : "admin" } }); recargar(); } catch (e) { toast(e.message, true); } } }, u.rol === "admin" ? "Hacer editor" : "Hacer admin"),
+            h("button", { class: "btn small ghost danger", type: "button", onclick: async () => { try { await api(`/api/admin/usuarios/${u.id}`, { method: "PATCH", body: { activo: !u.activo } }); recargar(); } catch (e) { toast(e.message, true); } } }, u.activo ? "Quitar acceso" : "Dar acceso"))))))))),
+    h("section", { class: "stack", style: { marginBottom: "28px" } },
+      h("div", { class: "row", style: { justifyContent: "space-between" } }, h("h2", {}, "Canales"), h("button", { class: "btn", type: "button", onclick: () => editarCanal(null) }, "+ Canal")),
+      h("div", { class: "lotes" }, canales.map((cn) => h("div", { class: "lote" },
+        h("div", { class: "stack", style: { gap: "4px" } }, h("b", {}, cn.nombre), h("span", { class: "muted", style: { fontSize: ".82rem" } }, `${cn.id} · ${cn.logo_key ? "con logo" : "sin logo"}`)),
+        h("button", { class: "btn small", type: "button", onclick: () => editarCanal(cn) }, "Editar"))))),
+    h("section", { class: "stack" }, h("h2", {}, "Uso de los últimos 14 días"),
+      uso.dias.length ? h("div", { class: "tw" }, h("table", {}, h("thead", {}, h("tr", {}, ["Día", "Usuario", "Portadas", "Textos de Claude", "Créditos aprox."].map((t) => h("th", {}, t)))),
+        h("tbody", {}, uso.dias.map((d) => h("tr", {}, h("td", { class: "num" }, d.dia), h("td", {}, d.usuario), h("td", { class: "num" }, d.imagenes), h("td", { class: "num" }, d.textos), h("td", { class: "num" }, d.imagenes * uso.creditosPorImagen))))))
+        : h("p", { class: "muted" }, "Sin uso todavía.")));
+}
+
+ruta();

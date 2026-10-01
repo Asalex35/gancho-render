@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gancho · Prismáticoos</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/assets/app.css">
+<link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#/"><b>Gancho</b><small>by Prismáticoos</small></a>
+  <nav class="nav" id="nav">
+    <a href="#/" data-r="">Inicio</a>
+    <a href="#/lote/nuevo" data-r="lote">Lote masivo</a>
+    <a href="#/actores" data-r="actores">Actores</a>
+    <a href="#/admin" data-r="admin" id="nav-admin" hidden>Administración</a>
+  </nav>
+  <span class="sp"></span>
+  <span class="meter opt" id="m-creditos" title="Créditos que quedan en Nano Banana">Créditos <b>…</b></span>
+  <span class="meter opt" id="m-uso" title="Portadas que generaste hoy">Hoy <b>…</b></span>
+  <span class="meter" id="m-usuario"></span>
+  <button class="btn small ghost" id="salir" type="button">Salir</button>
+</header>
+<main id="app"></main>
+<div id="toast" class="toast" hidden role="status"></div>
+<dialog id="modal"><div class="in" id="modal-in"></div></dialog>
+<dialog id="zoom" class="zoom"><img id="zoom-img" alt=""></dialog>
+<script src="/assets/app.js" type="module"></script>
+</body>
+</html>
