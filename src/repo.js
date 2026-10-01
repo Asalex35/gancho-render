@@ -4,9 +4,9 @@ import { CANALES_SEMILLA } from "./ai/playbook.js";
 
 export async function sembrarCanales() {
   for (const [id, c] of Object.entries(CANALES_SEMILLA)) {
-    await q(`INSERT INTO canales (id, nombre, voz, descripcion_fija, disclaimer, hashtags_base)
-             VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING`,
-      [id, c.nombre, c.voz, c.descripcionFija, c.disclaimer, JSON.stringify(c.hashtagsBase)]);
+    await q(`INSERT INTO canales (id, nombre, voz, descripcion_fija, disclaimer, hashtags_base, idioma, pais)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING`,
+      [id, c.nombre, c.voz, c.descripcionFija, c.disclaimer, JSON.stringify(c.hashtagsBase), c.idioma, c.pais]);
   }
 }
 
@@ -45,11 +45,13 @@ export async function usoHoy(usuario) {
 
 // Formato que consume la interfaz.
 export function publicarEpisodio(ep) {
+  const video = ep.video ? { ...ep.video, transcripcion: undefined, subtitulos: undefined, tieneTexto: Boolean(ep.video.transcripcion) } : null;
   return {
     ...ep,
+    video,
     propuestas: (ep.propuestas || []).map((p) => ({
       id: p.id, slot: p.slot, version: p.version, ...p.data,
-      imagen: { estado: p.imagen.estado, key: p.imagen.key, mini: p.imagen.mini, error: p.imagen.error, inicio: p.imagen.inicio, intentos: p.imagen.intentos },
+      imagen: { estado: p.imagen.estado, key: p.imagen.key, mini: p.imagen.mini, error: p.imagen.error, inicio: p.imagen.inicio, intentos: p.imagen.intentos, proveedor: p.imagen.proveedor },
       evaluacion: p.evaluacion, evaluando: p.evaluando, rehaciendo: p.rehaciendo, errorRehacer: p.error_rehacer,
       editadoAMano: p.editado, autoReintento: p.imagen.autoReintento || null, nVersiones: p.n_versiones || 0,
     })),

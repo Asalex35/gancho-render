@@ -6,6 +6,8 @@
 export const CANALES_SEMILLA = {
   CLAC: {
     nombre: "Cuando Los Ángeles Caen",
+    idioma: "es",
+    pais: "México",
     voz: "Tercera persona. Etiqueta social + edad o nombre propio. Cierre con 'sin imaginar' / 'sin saber'.",
     descripcionFija:
       "No todos los ángeles tienen alas. A veces, son personas comunes en momentos extraordinarios. Cuando los ángeles caen te presenta las historias de quienes vieron su vida transformada por un acto de bondad casi milagroso.\nUna serie que te tocará el alma. Mírala por Multimedios, Canal 6.",
@@ -15,6 +17,8 @@ export const CANALES_SEMILLA = {
   },
   ANDY_TORRES: {
     nombre: "Andy Torres",
+    idioma: "es",
+    pais: "México",
     voz: "Primera persona, confesión ('Mi hermana...', 'Me casé...'). Traición doble en el momento de máximo daño.",
     descripcionFija:
       "💔 Historias que te conmueven, inspiran y te harán reflexionar.\n📌 Suscríbete para no perderte ningún episodio: https://www.youtube.com/@andytorresoficial\n👍 Dale like, comenta tu opinión y comparte con alguien que necesita escuchar esta historia.",
@@ -59,6 +63,16 @@ el final siempre oculto; escenario de alto riesgo (boda, funeral, hospital); 45�
 - Un color saturado (vestido rojo, rosa o azul) contra fondo neutro. Escenarios latinoamericanos cotidianos (camión, calle, escuela, tiendita, iglesia).
 - Hiperrealista, cinematográfico, nítido, caras grandes. Esquina inferior izquierda libre para el logo, esquina inferior derecha libre (duración).
 - Debe entenderse a 168x94 px (miniatura en celular).
+
+## Canales en otros idiomas
+El playbook está en español, pero aplica igual en cualquier idioma. Escribe títulos, descripciones, tags y hashtags
+como un nativo del país del canal: adapta las fórmulas, NUNCA traduzcas palabra por palabra.
+- Inglés (EE. UU.): "...without knowing...", "...never imagining what would happen", "...and this is how he reacted",
+  "...but she did THIS". Sentence case o Title Case según el canal. Edad con coma: "Elena, 45, ...".
+- Portugués (Brasil): "...sem imaginar o que aconteceria", "...sem saber que...", "...e olha como ele reagiu",
+  "...mas ela fez ISSO". Usa nombres y escenarios creíbles para Brasil si la historia lo permite.
+- Los escenarios de la portada deben verse del país del canal (México, EE. UU., Brasil...).
+Las explicaciones para el equipo (concepto, por qué funciona, riesgo, gancho) van SIEMPRE en español.
 
 ## Reglas de seguridad de marca (obligatorias)
 - Nunca sexualizar ni poner en escenas románticas a menores de edad. Si un personaje es menor, mostrarlo solo en contexto familiar no romántico.

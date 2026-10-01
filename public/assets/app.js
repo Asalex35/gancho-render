@@ -42,6 +42,7 @@ const local = {
 };
 const modal = document.getElementById("modal");
 function abrirModal(...contenido) {
+  modal.className = "";
   document.getElementById("modal-in").replaceChildren(...contenido);
   if (!modal.open) modal.showModal();
 }
@@ -54,7 +55,7 @@ const fecha = (iso) => new Date(iso).toLocaleString("es-MX", { day: "numeric", m
 const confirmar = (titulo, texto, accion, boton = "Sí, continuar") => abrirModal(
   h("h2", {}, titulo), texto ? h("p", { class: "muted", style: { margin: 0 } }, texto) : null,
   h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cancelar"),
-    h("button", { class: "btn primary", type: "button", onclick: async (e) => { e.currentTarget.disabled = true; try { await accion(); cerrarModal(); } catch (er) { toast(er.message, true); e.currentTarget.disabled = false; } } }, boton)));
+    h("button", { class: "btn primary", type: "button", onclick: async (e) => { const b = e.currentTarget; b.disabled = true; try { await accion(); cerrarModal(); } catch (er) { toast(er.message, true); b.disabled = false; } } }, boton)));
 function seg(opciones, valor, alCambiar) {
   const box = h("div", { class: "seg", role: "group" });
   box.append(...Object.entries(opciones).map(([v, txt]) => h("button", { type: "button", "aria-pressed": String(valor === v), onclick: (e) => {
@@ -77,7 +78,13 @@ let me = null;
 let poll = null;
 let ultimoJSON = "";
 let editando = false;
+// Cada navegación tiene un número: una respuesta que llega tarde de otra vista no pinta ni reprograma nada.
+let navId = 0;
+const vigente = (t) => t === navId;
 const canalNombre = (id) => me.canales.find((c) => c.id === id)?.nombre || id;
+const canalIdioma = (id) => me.canales.find((c) => c.id === id)?.idioma || "es";
+const chipIdioma = (idioma) => h("span", { class: "idioma", title: me.idiomas?.[idioma] || idioma }, String(idioma).toUpperCase());
+const opcionesCanal = () => Object.fromEntries(me.canales.map((c) => [c.id, `${c.nombre} · ${String(c.idioma).toUpperCase()}`]));
 
 // ================= barra superior y router =================
 async function cargarMe() {
@@ -90,7 +97,7 @@ async function cargarMe() {
 document.getElementById("salir").addEventListener("click", async () => { await api("/api/logout", { method: "POST" }); location.href = "/login"; });
 
 async function ruta() {
-  clearTimeout(poll); ultimoJSON = ""; editando = false;
+  clearTimeout(poll); ultimoJSON = ""; editando = false; navId++;
   const [, a = "", id, b] = location.hash.split("/");
   document.querySelectorAll("#nav a").forEach((n) => n.toggleAttribute("aria-current", n.dataset.r === (a === "ep" || a === "nuevo" ? "" : a)));
   document.querySelectorAll("#nav a[aria-current]").forEach((n) => n.setAttribute("aria-current", "page"));
@@ -103,6 +110,8 @@ async function ruta() {
     if (a === "lote" && id === "nuevo") return await vistaLoteNuevo();
     if (a === "lote" && id) return await vistaLote(id);
     if (a === "actores") return await vistaActores();
+    if (a === "auto") return await vistaAuto();
+    if (a === "canales") return await vistaCanales();
     if (a === "admin") return await vistaAdmin();
     return await vistaInicio();
   } catch (e) {
@@ -114,7 +123,7 @@ window.addEventListener("hashchange", ruta);
 // ================= INICIO =================
 async function vistaInicio() {
   const [lotes, eps] = await Promise.all([api("/api/lotes"), api("/api/episodios")]);
-  const estados = { borrador: ["Borrador", ""], en_cola: ["En cola", "warn"], pensando: ["Generando", "warn"], listo: ["Listo", "ok"], error: ["Con error", "bad"] };
+  const estados = { borrador: ["Borrador", ""], en_cola: ["En cola", "warn"], pensando: ["Generando", "warn"], procesando: ["Viendo el video", "warn"], listo: ["Listo", "ok"], error: ["Con error", "bad"] };
   $app.replaceChildren(
     h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Inicio"), h("h1", {}, "¿Qué estrenamos hoy?")),
       h("div", { class: "row" }, h("a", { class: "btn big", href: "#/nuevo" }, "+ Un episodio"), h("a", { class: "btn primary big", href: "#/lote/nuevo" }, "+ Lote masivo"))),
@@ -182,11 +191,11 @@ async function vistaLoteNuevo() {
     const alcanza = me.creditos == null || me.creditos >= creditos;
     const quedanHoy = me.limites.userDailyImages - me.uso.imagenes;
     const lanzar = h("button", { class: "btn primary big", type: "button", disabled: !validas.length || Boolean(r.aviso), onclick: async (e) => {
-      e.currentTarget.disabled = true;
+      const b = e.currentTarget; b.disabled = true;
       try {
         const l = await api("/api/lotes", { method: "POST", body: { ...st, texto: texto.value } });
         local.del("gancho-lote"); toast(`Lote creado con ${l.episodios} episodios`); location.hash = `#/lote/${l.id}`;
-      } catch (er) { toast(er.message, true); e.currentTarget.disabled = false; }
+      } catch (er) { toast(er.message, true); b.disabled = false; }
     } }, `Lanzar ${validas.length} episodios`);
     resultado.replaceChildren(
       h("div", { class: "kpis" },
@@ -220,7 +229,7 @@ async function vistaLoteNuevo() {
       h("section", { class: "panel stack" },
         h("h2", {}, "2. Ajustes"),
         h("label", {}, "Nombre del lote", nombre),
-        h("label", {}, "Canal", seg(Object.fromEntries(me.canales.map((c) => [c.id, c.nombre])), st.canal, (v) => { st.canal = v; guardar(); })),
+        h("label", {}, "Canal", seg(opcionesCanal(), st.canal, (v) => { st.canal = v; guardar(); })),
         h("label", {}, "Modelo de imagen", seg(me.modelos, st.modelo, (v) => { st.modelo = v; guardar(); })),
         h("label", { class: "switch" }, auto, h("span", {}, "Elegir la mejor automáticamente", h("br"), h("span", { class: "hint" }, "Gancho elige la de mayor calificación y escribe la descripción. Tú solo revisas y cambias las que no te gusten."))),
         me.refsPublicas ? null : h("div", { class: "aviso" }, "Modo local: Nano Banana no ve las fotos de los actores hasta publicar la app."),
@@ -230,17 +239,19 @@ async function vistaLoteNuevo() {
 
 // ================= LOTE: revisión rápida =================
 let filtroLote = "todos";
-async function vistaLote(id) {
+async function vistaLote(id, t = navId) {
   const l = await api(`/api/lotes/${id}`);
+  if (!vigente(t)) return;
+  clearTimeout(poll);
   const json = JSON.stringify(l);
   if (json !== ultimoJSON) { ultimoJSON = json; pintarLote(l); }
   const ocupado = l.episodios.some((e) => ["en_cola", "pensando"].includes(e.estado) || e.eligiendo || e.propuestas.some((p) => ["en_cola", "generando"].includes(p.estado) || p.evaluando || p.rehaciendo));
-  if (ocupado) poll = setTimeout(() => vistaLote(id).catch(() => {}), 4000);
+  if (ocupado) poll = setTimeout(() => vistaLote(id, t).catch(() => {}), 4000);
   else cargarMe().catch(() => {});
 }
 
 function pintarLote(l) {
-  const recargar = () => { ultimoJSON = ""; clearTimeout(poll); vistaLote(l.id); };
+  const recargar = () => { ultimoJSON = ""; clearTimeout(poll); vistaLote(l.id, navId); };
   const filtros = {
     todos: () => true,
     elegir: (e) => e.estado === "listo" && !e.elegida,
@@ -322,8 +333,9 @@ async function vistaEditor(id) {
       const inp = (k, ph, label) => { const el = h("input", { type: "text", placeholder: ph, "aria-label": label }); el.value = c[k] || ""; el.addEventListener("input", () => { c[k] = el.value; guardarBorrador(); }); return el; };
       return h("div", { class: "castrow" },
         h("div", { class: "r1" },
-          actor?.fotos?.length ? h("img", { class: "avatar", src: media(actor.fotos[0]), alt: actor.nombre }) : h("div", { class: "avatar" }, "Sin foto"),
-          h("div", { class: "stack", style: { gap: "4px" } }, h("b", {}, actor ? actor.nombre : "Elige quién lo interpreta"),
+          actor?.fotos?.length ? h("img", { class: "avatar", src: media(actor.fotos[0]), alt: actor.nombre })
+            : c.fotos?.length ? h("img", { class: "avatar", src: media(c.fotos[0]), alt: c.personaje, title: "Cuadro del video" }) : h("div", { class: "avatar" }, "Sin foto"),
+          h("div", { class: "stack", style: { gap: "4px" } }, h("b", {}, actor ? actor.nombre : c.fotos?.length ? "Cara tomada del video" : "Elige quién lo interpreta"),
             h("button", { class: "btn small", type: "button", onclick: () => elegirActor(c) }, actor ? "Cambiar actor" : "Elegir actor o subir fotos")),
           h("button", { class: "btn small ghost danger", type: "button", "aria-label": "Quitar personaje", onclick: () => { st.cast.splice(i, 1); guardarBorrador(); pintarCast(); } }, "Quitar")),
         h("div", { class: "r2" }, inp("personaje", "Personaje (ej. Elena)", "Nombre del personaje"), inp("edad", "Edad", "Edad")),
@@ -335,7 +347,7 @@ async function vistaEditor(id) {
     abrirModal(
       h("h2", {}, "¿Quién lo interpreta?"),
       actores.length ? h("div", { class: "biblio" }, actores.map((a) => h("button", { class: "actor", type: "button", "aria-pressed": String(c.actorId === a.id),
-        onclick: () => { c.actorId = a.id; guardarBorrador(); cerrarModal(); pintarCast(); } },
+        onclick: () => { c.actorId = a.id; c.fotos = []; guardarBorrador(); cerrarModal(); pintarCast(); } },
         a.fotos[0] ? h("img", { src: media(a.fotos[0]), alt: "" }) : h("div", { class: "avatar" }, "Sin foto"), h("span", {}, a.nombre)))) : h("p", { class: "muted" }, "Todavía no hay actores. Sube el primero abajo."),
       h("hr", { style: { border: 0, borderTop: "1px solid var(--line)", width: "100%" } }),
       formNuevoActor((a) => { actores.unshift(a); c.actorId = a.id; guardarBorrador(); cerrarModal(); pintarCast(); }),
@@ -362,7 +374,7 @@ async function vistaEditor(id) {
     h("div", { class: "grid2" },
       h("section", { class: "panel stack" },
         h("h2", {}, "1. La historia"),
-        h("label", {}, "Canal", seg(Object.fromEntries(me.canales.map((c) => [c.id, c.nombre])), st.canal, (v) => { st.canal = v; guardarBorrador(); })),
+        h("label", {}, "Canal", seg(opcionesCanal(), st.canal, (v) => { st.canal = v; guardarBorrador(); })),
         campo("titulo", "Nombre interno", "Solo para encontrarlo aquí. No es el título de YouTube.", false, "Ej. La boda de Lucía"),
         campo("sinopsis", "Sinopsis", "De qué trata, en 5 a 10 líneas. Es lo único obligatorio.", true),
         campo("giro", "El giro principal", "Opcional: si lo dejas vacío, Claude lo deduce.", true, "Ej. Su hermana se fuga con el novio el día de la boda"),
@@ -413,28 +425,38 @@ function formNuevoActor(alGuardar) {
 }
 
 // ================= EPISODIO =================
-async function vistaEpisodio(id) {
+async function vistaEpisodio(id, t = navId) {
   const p = await api(`/api/episodios/${id}`);
+  if (!vigente(t)) return;
+  clearTimeout(poll);
   const json = JSON.stringify(p);
   if (json !== ultimoJSON && !editando) { ultimoJSON = json; pintarEpisodio(p); }
-  const ocupado = ["en_cola", "pensando"].includes(p.estado) || p.eligiendo || p.propuestas.some(OCUPADA);
-  if (ocupado) poll = setTimeout(() => vistaEpisodio(id).catch(() => {}), 3000);
+  const ocupado = ["en_cola", "pensando", "procesando"].includes(p.estado) || p.eligiendo || p.propuestas.some(OCUPADA);
+  if (ocupado) poll = setTimeout(() => vistaEpisodio(id, t).catch(() => {}), 3000);
   else cargarMe().catch(() => {});
 }
 
 function pintarEpisodio(p) {
-  const recargar = () => { ultimoJSON = ""; clearTimeout(poll); vistaEpisodio(p.id); };
+  const recargar = () => { ultimoJSON = ""; clearTimeout(poll); vistaEpisodio(p.id, navId); };
   const generar = async () => { try { await api(`/api/episodios/${p.id}/generar`, { method: "POST" }); recargar(); } catch (e) { toast(e.message, true); } };
-  const pensando = ["en_cola", "pensando"].includes(p.estado);
+  const pensando = ["en_cola", "pensando", "procesando"].includes(p.estado);
   const partes = [h("div", { class: "head" },
-    h("div", {}, h("div", { class: "eyebrow" }, p.lote_id ? h("a", { href: `#/lote/${p.lote_id}`, style: { color: "inherit" } }, `← Lote · ${canalNombre(p.canal)}`) : canalNombre(p.canal)), h("h1", {}, p.titulo)),
+    h("div", {}, h("div", { class: "eyebrow row", style: { gap: "8px" } },
+      p.lote_id ? h("a", { href: `#/lote/${p.lote_id}`, style: { color: "inherit" } }, `← Lote · ${canalNombre(p.canal)}`)
+        : p.origen === "auto" ? h("a", { href: "#/auto", style: { color: "inherit" } }, `← Automático · ${canalNombre(p.canal)}`) : canalNombre(p.canal),
+      chipIdioma(canalIdioma(p.canal)),
+      p.aprobacion === "auto" ? h("span", { class: "tag ok" }, "Aprobada sola") : p.aprobacion === "por_aprobar" && !p.elegida ? h("span", { class: "tag warn" }, "Por aprobar") : null),
+      h("h1", {}, p.titulo)),
     h("div", { class: "row" },
       h("a", { class: "btn", href: `#/ep/${p.id}/editar` }, "Editar historia y cast"),
       p.propuestas.length ? h("button", { class: "btn", type: "button", disabled: pensando, onclick: generar }, "3 propuestas nuevas") : null,
       h("button", { class: "btn ghost danger", type: "button", onclick: () => confirmar("¿Borrar este episodio?", "Se borran las portadas y versiones. No se puede deshacer.",
         async () => { await api(`/api/episodios/${p.id}`, { method: "DELETE" }); location.hash = p.lote_id ? `#/lote/${p.lote_id}` : "#/"; }, "Sí, borrar") }, "Borrar")))];
 
-  if (pensando) {
+  if (p.estado === "procesando") {
+    partes.push(h("div", { class: "vacio" }, h("div", { class: "spin" }), h("h2", {}, "Gancho está viendo el episodio"), pasosVideo(p.video?.etapa),
+      h("p", { class: "muted", style: { margin: 0 } }, "Saca cuadros, escucha el audio y escribe la historia. Un episodio de 40 min tarda unos minutos.")));
+  } else if (pensando) {
     partes.push(h("div", { class: "vacio" }, h("div", { class: "spin" }), h("h2", {}, p.estado === "en_cola" ? "En la fila" : "Claude está leyendo la historia"),
       h("p", { class: "muted", style: { margin: 0 } }, p.estado === "en_cola" ? "Empieza en cuanto se libere un lugar." : "Arma 3 propuestas en alrededor de un minuto; después las portadas se pintan solas.")));
   } else if (p.estado === "error") {
@@ -467,7 +489,7 @@ function tarjeta(p, x, i, recargar) {
     lienzo = h("div", { class: "lienzo" }, h("img", { src: media(img.key), alt: x.concepto, onclick: () => verGrande(media(img.key)) }));
   } else if (img.estado === "error") {
     lienzo = h("div", { class: "lienzo" }, h("div", { class: "estado" }, h("b", { style: { color: "var(--bad)" } }, img.error || "La imagen falló."),
-      h("button", { class: "btn small", type: "button", onclick: async (e) => { e.currentTarget.disabled = true; try { await api(`/api/propuestas/${x.id}/reintentar`, { method: "POST" }); recargar(); } catch (er) { toast(er.message, true); } } }, "Reintentar imagen")));
+      h("button", { class: "btn small", type: "button", onclick: async (e) => { const b = e.currentTarget; b.disabled = true; try { await api(`/api/propuestas/${x.id}/reintentar`, { method: "POST" }); recargar(); } catch (er) { toast(er.message, true); b.disabled = false; } } }, "Reintentar imagen")));
   } else {
     const s = img.inicio ? Math.round((Date.now() - img.inicio) / 1000) : 0;
     lienzo = h("div", { class: "lienzo shimmer" }, h("div", { class: "estado" }, h("div", { class: "spin" }),
@@ -499,8 +521,10 @@ function tarjeta(p, x, i, recargar) {
     lienzo,
     h("div", { class: "body" },
       h("div", { class: "row", style: { gap: "6px" } }, h("span", { class: "tag" }, `Opción ${i + 1}`), x.version > 1 ? h("span", { class: "tag" }, `v${x.version}`) : null,
-        caras ? h("span", { class: `tag ${caras[1]}` }, caras[0]) : null, x.editadoAMano ? h("span", { class: "tag" }, "Título editado") : null),
-      h("div", { class: "stack", style: { gap: "4px" } }, x.rehaciendo === "titulo" ? h("div", { class: "row muted" }, h("div", { class: "spin" }), "Rehaciendo el título…") : titulo, cuenta),
+        caras ? h("span", { class: `tag ${caras[1]}` }, caras[0]) : null, x.editadoAMano ? h("span", { class: "tag" }, "Título editado") : null,
+        img.proveedor && img.proveedor !== "nanobanana" ? h("span", { class: "tag warn", title: "Nano Banana falló y se usó el respaldo" }, `Hecha con ${{ google: "Google", fal: "Seedream" }[img.proveedor] || img.proveedor}`) : null),
+      h("div", { class: "stack", style: { gap: "4px" } }, x.rehaciendo === "titulo" ? h("div", { class: "row muted" }, h("div", { class: "spin" }), "Rehaciendo el título…") : titulo,
+        x.traduccion ? h("span", { class: "trad" }, `En español: ${x.traduccion}`) : null, cuenta),
       h("div", { class: "score" },
         h("div", { class: "ring", style: { "--v": total, "--c": colorScore(total) }, role: "img", "aria-label": `Calificación ${total} de 100` }, h("b", {}, total)),
         h("div", { class: "stack", style: { gap: "6px" } },
@@ -512,7 +536,7 @@ function tarjeta(p, x, i, recargar) {
       x.errorRehacer ? h("div", { class: "probs" }, x.errorRehacer) : null,
       h("div", { class: "acciones" },
         h("button", { class: `btn ${elegida ? "" : "primary"} full`, type: "button", disabled: img.estado !== "lista" || Boolean(x.rehaciendo) || p.eligiendo,
-          onclick: async (e) => { e.currentTarget.disabled = true; try { await api(`/api/propuestas/${x.id}/elegir`, { method: "POST" }); recargar(); } catch (er) { toast(er.message, true); e.currentTarget.disabled = false; } } },
+          onclick: async (e) => { const b = e.currentTarget; b.disabled = true; try { await api(`/api/propuestas/${x.id}/elegir`, { method: "POST" }); recargar(); } catch (er) { toast(er.message, true); b.disabled = false; } } },
           elegida ? "✓ Elegida · regenerar textos" : "Elegir esta"),
         h("button", { class: "btn", type: "button", disabled: Boolean(x.rehaciendo), onclick: () => rehacer(x, recargar) }, x.rehaciendo ? "Rehaciendo…" : "Rehacer"),
         h("button", { class: "btn", type: "button", disabled: !x.nVersiones, onclick: () => versiones(x, recargar) }, `Versiones${x.nVersiones ? ` (${x.nVersiones})` : ""}`)),
@@ -615,7 +639,7 @@ async function vistaActores() {
 // ================= ADMINISTRACIÓN =================
 async function vistaAdmin() {
   if (me.rol !== "admin") { location.hash = "#/"; return; }
-  const [uso, usuarios, canales] = await Promise.all([api("/api/admin/uso"), api("/api/admin/usuarios"), api("/api/canales")]);
+  const [uso, usuarios] = await Promise.all([api("/api/admin/uso"), api("/api/admin/usuarios")]);
   const recargar = () => vistaAdmin();
   const hoy = uso.dias.filter((d) => d.dia === new Date().toISOString().slice(0, 10)).reduce((s, d) => s + d.imagenes, 0);
   const porEstado = Object.fromEntries(uso.estados.map((e) => [e.estado, e.n]));
@@ -640,27 +664,8 @@ async function vistaAdmin() {
           try { await api(`/api/admin/usuarios/${usr.id}`, { method: "PATCH", body: { clave: c.value } }); cerrarModal(); toast("Contraseña cambiada"); } catch (e) { toast(e.message, true); }
         } }, "Guardar")));
   };
-  const editarCanal = (cn) => {
-    const st = { id: cn?.id || "", nombre: cn?.nombre || "", voz: cn?.voz || "", descripcion_fija: cn?.descripcion_fija || "", disclaimer: cn?.disclaimer || "", hashtags: (cn?.hashtags_base || []).join(" ") };
-    const f = (k, label, area, hint) => { const el = area ? h("textarea", {}) : h("input", { type: "text" }); el.value = st[k]; el.addEventListener("input", () => (st[k] = el.value)); return h("label", {}, label, hint ? h("span", { class: "hint" }, hint) : null, el); };
-    const logo = h("input", { type: "file", accept: "image/png", hidden: true, onchange: async () => {
-      const fd = new FormData(); fd.append("logo", logo.files[0]);
-      try { await api(`/api/admin/canales/${cn.id}/logo`, { method: "POST", form: fd }); toast("Logo guardado"); me = null; await cargarMe(); } catch (e) { toast(e.message, true); }
-    } });
-    abrirModal(h("h2", {}, cn ? `Canal: ${cn.nombre}` : "Nuevo canal"),
-      cn ? null : f("id", "Código", false, "Corto, sin espacios. Ej. CLAC"),
-      f("nombre", "Nombre"), f("voz", "Voz de los títulos", true, "Ej. Primera persona, confesión, traición doble."),
-      f("descripcion_fija", "Texto fijo de la descripción", true), f("disclaimer", "Disclaimer", true), f("hashtags", "Hashtags fijos", false, "Separados por espacio. Ej. #AndyTorres #Prismaticoos"),
-      cn ? h("div", { class: "row" }, h("button", { class: "btn", type: "button", onclick: () => logo.click() }, cn.logo_key ? "Cambiar logo (PNG)" : "Subir logo (PNG)"), logo,
-        cn.logo_key ? h("img", { src: media(cn.logo_key), alt: "Logo", style: { height: "40px", background: "#333", padding: "4px", borderRadius: "6px" } }) : null) : null,
-      h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cancelar"),
-        h("button", { class: "btn primary", type: "button", onclick: async () => {
-          try { await api(`/api/admin/canales/${encodeURIComponent(st.id || "X")}`, { method: "PUT", body: st }); cerrarModal(); toast("Canal guardado"); me = null; await cargarMe(); recargar(); } catch (e) { toast(e.message, true); }
-        } }, "Guardar")));
-  };
-
   $app.replaceChildren(
-    h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Administración"), h("h1", {}, "Equipo, canales y gasto"))),
+    h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Administración"), h("h1", {}, "Equipo y gasto"))),
     h("div", { class: "kpis", style: { marginBottom: "28px" } },
       h("div", { class: `kpi${portadasQueAlcanzan != null && portadasQueAlcanzan < 30 ? " alerta" : ""}` }, h("span", { class: "muted" }, "Créditos Nano Banana"), h("b", {}, uso.creditos ?? "?"),
         portadasQueAlcanzan != null ? h("span", { class: "muted", style: { fontSize: ".78rem" } }, `Alcanzan para ≈ ${portadasQueAlcanzan} portadas`) : null),
@@ -678,15 +683,192 @@ async function vistaAdmin() {
             h("button", { class: "btn small", type: "button", onclick: () => cambiarClave(u) }, "Contraseña"),
             h("button", { class: "btn small", type: "button", onclick: async () => { try { await api(`/api/admin/usuarios/${u.id}`, { method: "PATCH", body: { rol: u.rol === "admin" ? "editor" : "admin" } }); recargar(); } catch (e) { toast(e.message, true); } } }, u.rol === "admin" ? "Hacer editor" : "Hacer admin"),
             h("button", { class: "btn small ghost danger", type: "button", onclick: async () => { try { await api(`/api/admin/usuarios/${u.id}`, { method: "PATCH", body: { activo: !u.activo } }); recargar(); } catch (e) { toast(e.message, true); } } }, u.activo ? "Quitar acceso" : "Dar acceso"))))))))),
-    h("section", { class: "stack", style: { marginBottom: "28px" } },
-      h("div", { class: "row", style: { justifyContent: "space-between" } }, h("h2", {}, "Canales"), h("button", { class: "btn", type: "button", onclick: () => editarCanal(null) }, "+ Canal")),
-      h("div", { class: "lotes" }, canales.map((cn) => h("div", { class: "lote" },
-        h("div", { class: "stack", style: { gap: "4px" } }, h("b", {}, cn.nombre), h("span", { class: "muted", style: { fontSize: ".82rem" } }, `${cn.id} · ${cn.logo_key ? "con logo" : "sin logo"}`)),
-        h("button", { class: "btn small", type: "button", onclick: () => editarCanal(cn) }, "Editar"))))),
+    h("section", { class: "stack", style: { marginBottom: "28px" } }, h("h2", {}, "Proveedores de imagen"),
+      h("p", { class: "muted", style: { margin: 0 } }, uso.proveedores.length
+        ? `Orden: ${uso.proveedores.map((p) => p.nombre).join(" → ")}. Si uno falla, Gancho usa el siguiente y avisa.`
+        : "No hay ningún proveedor configurado."),
+      uso.proveedores.length < 2 ? h("div", { class: "aviso" }, "Solo hay un proveedor. Agrega GOOGLE_API_KEY o FAL_KEY para tener respaldo si Nano Banana se cae.") : null,
+      uso.porProveedor.length ? h("div", { class: "tw" }, h("table", {}, h("thead", {}, h("tr", {}, ["Proveedor (24 h)", "Estado", "Imágenes"].map((t) => h("th", {}, t)))),
+        h("tbody", {}, uso.porProveedor.map((r) => h("tr", {}, h("td", {}, { nanobanana: "Nano Banana", google: "Google", fal: "Seedream" }[r.proveedor] || r.proveedor), h("td", {}, r.estado), h("td", { class: "num" }, r.n)))))) : null),
     h("section", { class: "stack" }, h("h2", {}, "Uso de los últimos 14 días"),
       uso.dias.length ? h("div", { class: "tw" }, h("table", {}, h("thead", {}, h("tr", {}, ["Día", "Usuario", "Portadas", "Textos de Claude", "Créditos aprox."].map((t) => h("th", {}, t)))),
         h("tbody", {}, uso.dias.map((d) => h("tr", {}, h("td", { class: "num" }, d.dia), h("td", {}, d.usuario), h("td", { class: "num" }, d.imagenes), h("td", { class: "num" }, d.textos), h("td", { class: "num" }, d.imagenes * uso.creditosPorImagen))))))
         : h("p", { class: "muted" }, "Sin uso todavía.")));
+}
+
+// ================= AUTOMÁTICO =================
+const ETAPAS = [["en_cola", "En fila"], ["leyendo", "Sacando cuadros"], ["transcribiendo", "Escuchando"], ["analizando", "Entendiendo la historia"], ["listo", "Haciendo portadas"]];
+function pasosVideo(etapa) {
+  const i = ETAPAS.findIndex(([k]) => k === etapa);
+  return h("div", { class: "pasos" }, ETAPAS.map(([k, t], j) => h("span", { class: j < i ? "hecho" : j === i ? "ahora" : "" }, j < i ? `✓ ${t}` : t)));
+}
+
+let subiendo = null;
+async function vistaAuto(t = navId) {
+  const lista = await api("/api/auto");
+  if (!vigente(t)) return;
+  const st = local.get("gancho-auto") || { canal: me.canales[0]?.id, notas: "" };
+  const guardar = () => local.set("gancho-auto", st);
+  let subtitulos = null, nombreSub = "";
+
+  const input = h("input", { type: "file", accept: "video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.webm,.mkv,.m4v", multiple: true, hidden: true, onchange: () => subir([...input.files]) });
+  const sub = h("input", { type: "file", accept: ".srt,.vtt,.txt", hidden: true, onchange: async () => {
+    const f = sub.files[0]; if (!f) return;
+    subtitulos = (await f.text()).slice(0, 400000); nombreSub = f.name; subTxt.textContent = `Subtítulos: ${f.name}`;
+  } });
+  const subTxt = h("span", { class: "muted", style: { fontSize: ".85rem" } }, me.transcripcion ? "Opcional: Gancho transcribe el audio solo." : "Sin transcripción automática: sube subtítulos o el guion para mejores resultados.");
+  const notas = h("input", { type: "text", id: "auto-notas", placeholder: "Notas opcionales para todos estos videos (ej. evitar armas)" });
+  notas.value = st.notas || "";
+  notas.addEventListener("input", () => { st.notas = notas.value; guardar(); });
+  const progreso = h("div", { class: "stack", style: { gap: "6px", justifyItems: "center" } });
+
+  async function subir(files) {
+    if (!files.length || subiendo) return;
+    if (!st.canal) return toast("Elige el canal.", true);
+    subiendo = true;
+    for (const [n, f] of files.entries()) {
+      const barraEl = h("i");
+      progreso.replaceChildren(h("span", {}, `Subiendo ${n + 1} de ${files.length}: ${f.name}`), h("div", { class: "barra-subida" }, barraEl));
+      try {
+        const r = await api("/api/auto/subida", { method: "POST", body: { nombre: f.name, tamano: f.size } });
+        await new Promise((ok, no) => {
+          const x = new XMLHttpRequest();
+          if (r.url) { x.open("PUT", r.url); x.setRequestHeader("Content-Type", r.tipo); }
+          else { x.open("PUT", `/api/auto/subida/${r.key}`); x.setRequestHeader("X-Gancho", "1"); }
+          x.upload.onprogress = (e) => { if (e.lengthComputable) barraEl.style.width = `${(e.loaded / e.total) * 100}%`; };
+          x.onload = () => (x.status < 300 ? ok() : no(new Error(r.url ? "El almacenamiento rechazó el video. Revisa el CORS del bucket." : "No se pudo subir el video.")));
+          x.onerror = () => no(new Error("Se cortó la subida. Revisa tu conexión."));
+          x.send(f);
+        });
+        await api("/api/auto/episodios", { method: "POST", body: { canal: st.canal, key: r.key, nombreArchivo: f.name, notas: st.notas, subtitulos: files.length === 1 ? subtitulos : null } });
+      } catch (e) { toast(`${f.name}: ${e.message}`, true); }
+    }
+    subiendo = null;
+    progreso.replaceChildren();
+    toast("Listo. Gancho ya está viendo los videos.");
+    if (location.hash.startsWith("#/auto")) { navId++; vistaAuto(); }
+  }
+
+  const zona = h("div", { class: "subir", tabindex: "0", role: "button", onclick: () => input.click(),
+    onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } } },
+    h("b", {}, "Suelta aquí el video final del episodio"),
+    h("span", { class: "muted" }, "Puedes soltar varios. MP4, MOV, WEBM o MKV · hasta 10 GB"), progreso);
+  zona.addEventListener("dragover", (e) => { e.preventDefault(); zona.classList.add("on"); });
+  zona.addEventListener("dragleave", () => zona.classList.remove("on"));
+  zona.addEventListener("drop", (e) => { e.preventDefault(); zona.classList.remove("on"); subir([...e.dataTransfer.files]); });
+
+  const estadoItem = (e) => {
+    if (e.estado === "error") return h("span", { class: "tag bad" }, "Error");
+    if (e.estado === "procesando") return pasosVideo(e.etapa);
+    if (["en_cola", "pensando"].includes(e.estado)) return h("span", { class: "tag warn" }, "Haciendo propuestas");
+    if (e.eligiendo) return h("span", { class: "tag warn" }, "Escribiendo descripción");
+    if (e.aprobacion === "auto") return h("span", { class: "tag ok" }, "Aprobada sola");
+    if (e.elegida) return h("span", { class: "tag ok" }, "Aprobada");
+    if (e.aprobacion === "por_aprobar") return h("span", { class: "tag warn" }, "Por aprobar");
+    return h("span", { class: "tag" }, "Pintando portadas");
+  };
+  const mins = (s) => (s ? `${Math.round(s / 60)} min` : "");
+
+  $app.replaceChildren(
+    h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Automático"), h("h1", {}, "Sube el video, Gancho hace el resto")),
+      h("a", { class: "btn", href: "#/canales" }, "Reglas por canal")),
+    h("div", { class: "grid2", style: { marginBottom: "28px" } },
+      zona,
+      h("section", { class: "panel stack" },
+        h("label", {}, "Canal", seg(opcionesCanal(), st.canal, (v) => { st.canal = v; guardar(); })),
+        h("div", { class: "row" }, h("button", { class: "btn small", type: "button", onclick: () => sub.click() }, "Subtítulos o guion"), sub, subTxt),
+        notas,
+        h("p", { class: "muted", style: { margin: 0, fontSize: ".85rem" } }, "Gancho saca cuadros del video, entiende la historia, toma las caras de los actores y hace 3 portadas. Si el canal tiene aprobación automática y la mejor pasa la calificación, queda lista sola; si no, te avisa para que la apruebes."))),
+    h("h2", { style: { marginBottom: "12px" } }, "Videos"),
+    lista.length ? h("div", { class: "cola" }, lista.map((e) => h("a", { class: "item", href: `#/ep/${e.id}` },
+      h("div", { class: "img" }, e.portada ? h("img", { src: media(e.portada), alt: "", loading: "lazy" }) : "Sin portada"),
+      h("div", { class: "stack", style: { gap: "6px", minWidth: 0 } },
+        h("b", {}, e.titulo),
+        h("div", { class: "cifras" }, h("span", {}, canalNombre(e.canal)), chipIdioma(canalIdioma(e.canal)), e.duracion ? h("span", {}, mins(e.duracion)) : null,
+          e.fuente === "ninguna" ? h("span", { style: { color: "var(--mid)" } }, "Sin audio transcrito") : null, h("span", {}, `${e.creado_por} · ${fecha(e.actualizado)}`)),
+        estadoItem(e), e.error ? h("span", { style: { color: "var(--bad)", fontSize: ".82rem" } }, e.error) : null),
+      e.mejor != null ? h("b", { style: { color: colorScore(e.mejor), fontSize: "1.3rem", fontFamily: "var(--display)" } }, e.mejor) : h("span"))))
+      : h("div", { class: "vacio" }, h("p", { class: "muted", style: { margin: 0 } }, "Todavía no hay videos.")));
+
+  const ocupado = lista.some((e) => ["procesando", "en_cola", "pensando"].includes(e.estado) || e.eligiendo || (e.estado === "listo" && !e.elegida && e.aprobacion !== "por_aprobar"));
+  clearTimeout(poll);
+  if (ocupado) poll = setTimeout(() => { if (!subiendo) vistaAuto(t).catch(() => {}); }, 6000);
+}
+
+// ================= CANALES =================
+async function vistaCanales() {
+  const canales = await api("/api/canales");
+  const admin = me.rol === "admin";
+  const recargar = async () => { me = null; await cargarMe(); vistaCanales(); };
+  $app.replaceChildren(
+    h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Canales"), h("h1", {}, `${canales.length} canales`)),
+      admin ? h("button", { class: "btn primary big", type: "button", onclick: () => editarCanal(null, recargar) }, "+ Canal") : null),
+    h("p", { class: "muted", style: { marginTop: 0 } }, "Cada canal tiene su idioma, su voz y sus reglas. Gancho escribe títulos, descripciones y tags en el idioma del canal y te muestra la traducción al español."),
+    h("div", { class: "actores" }, canales.map((c) => h("div", { class: "canal-card" },
+      h("div", { class: "row", style: { justifyContent: "space-between" } }, h("b", {}, c.nombre), chipIdioma(c.idioma)),
+      c.logo_key ? h("img", { class: "logo", src: media(c.logo_key), alt: "Logo" }) : h("span", { class: "muted", style: { fontSize: ".8rem" } }, "Sin logo"),
+      h("div", { class: "cifras" }, c.pais ? h("span", {}, c.pais) : null, h("span", {}, me.modelos[c.modelo] || c.modelo),
+        h("span", {}, c.auto_aprobar ? `Aprueba sola desde ${c.auto_aprobar}` : "Siempre pide aprobación"), c.webhook_url ? h("span", {}, "Con avisos") : null,
+        c.activo ? null : h("span", { style: { color: "var(--bad)" } }, "Desactivado")),
+      admin ? h("div", {}, h("button", { class: "btn small", type: "button", onclick: () => editarCanal(c, recargar) }, "Editar")) : null))));
+}
+
+function editarCanal(cn, recargar) {
+  const st = {
+    id: cn?.id || "", nombre: cn?.nombre || "", idioma: cn?.idioma || "es", pais: cn?.pais || "", voz: cn?.voz || "", estilo_visual: cn?.estilo_visual || "",
+    ejemplos: (cn?.ejemplos || []).join("\n"), descripcion_fija: cn?.descripcion_fija || "", disclaimer: cn?.disclaimer || "",
+    hashtags: (cn?.hashtags_base || []).join(" "), tags_base: (cn?.tags_base || []).join(", "), modelo: cn?.modelo || "nb2",
+    auto_aprobar: cn?.auto_aprobar ?? "", webhook_url: cn?.webhook_url || "", activo: cn?.activo ?? true,
+  };
+  const campos = {};
+  const f = (k, label, { area, hint, ph } = {}) => {
+    const el = area ? h("textarea", { placeholder: ph || "" }) : h("input", { type: "text", placeholder: ph || "" });
+    el.value = st[k]; el.addEventListener("input", () => (st[k] = el.value)); campos[k] = el;
+    return h("label", {}, label, hint ? h("span", { class: "hint" }, hint) : null, el);
+  };
+  const logo = h("input", { type: "file", accept: "image/png", hidden: true, onchange: async () => {
+    const fd = new FormData(); fd.append("logo", logo.files[0]);
+    try { await api(`/api/admin/canales/${cn.id}/logo`, { method: "POST", form: fd }); toast("Logo guardado"); } catch (e) { toast(e.message, true); }
+  } });
+  const sugerir = h("button", { class: "btn small", type: "button", onclick: async () => {
+    sugerir.disabled = true; sugerir.textContent = "Pensando…";
+    try {
+      const r = await api("/api/admin/canales/sugerir", { method: "POST", body: { nombre: st.nombre, idioma: st.idioma, pais: st.pais, ejemplos: st.ejemplos } });
+      for (const [k, v] of [["voz", r.voz], ["estilo_visual", r.estilo_visual], ["hashtags", r.hashtags.join(" ")], ["tags_base", r.tags_base.join(", ")]]) { st[k] = v; campos[k].value = v; }
+      toast("Listo. Revisa y ajusta lo que quieras.");
+    } catch (e) { toast(e.message, true); }
+    sugerir.disabled = false; sugerir.textContent = "Llenar voz y estilo con Claude";
+  } }, "Llenar voz y estilo con Claude");
+
+  abrirModal(
+    h("h2", {}, cn ? `Canal: ${cn.nombre}` : "Nuevo canal"),
+    h("div", { class: "form-canal" },
+      h("div", { class: "dos" }, f("nombre", "Nombre"), cn ? h("label", {}, "Código", h("input", { type: "text", value: cn.id, disabled: true })) : f("id", "Código", { hint: "Corto, sin espacios. Ej. CLAC_PT", ph: "CLAC_EN" })),
+      h("div", { class: "dos" }, h("label", {}, "Idioma", seg(me.idiomas, st.idioma, (v) => (st.idioma = v))), f("pais", "País del público", { ph: "México, Estados Unidos, Brasil…" })),
+      f("ejemplos", "Títulos que le han funcionado", { area: true, hint: "Uno por línea, en el idioma del canal. Gancho los usa como ejemplo." }),
+      h("div", {}, sugerir),
+      f("voz", "Voz de los títulos", { area: true, hint: "Ej. Primera persona, confesión, traición doble." }),
+      f("estilo_visual", "Estilo visual de las portadas", { area: true, hint: "Ej. Sin texto, triángulo, colores saturados, escenarios de Brasil." }),
+      f("descripcion_fija", "Texto fijo de la descripción", { area: true }),
+      f("disclaimer", "Disclaimer", { area: true }),
+      h("div", { class: "dos" }, f("hashtags", "Hashtags fijos", { hint: "Separados por espacio" }), f("tags_base", "Tags base", { hint: "Separados por coma" })),
+      h("label", {}, "Modelo de imagen", seg(me.modelos, st.modelo, (v) => (st.modelo = v))),
+      h("label", {}, "Aprobación automática", seg({ "": "Siempre preguntar", 80: "Desde 80", 85: "Desde 85", 90: "Desde 90" }, String(st.auto_aprobar), (v) => (st.auto_aprobar = v)),
+        h("span", { class: "hint" }, "Si la mejor portada de un video llega a esa calificación, se aprueba sola y te avisa.")),
+      f("webhook_url", "Avisos (webhook)", { hint: "URL de Slack, Google Chat o Discord para avisar cuando haya portadas por aprobar.", ph: "https://hooks.slack.com/services/…" }),
+      cn ? h("div", { class: "row" },
+        h("button", { class: "btn small", type: "button", onclick: () => logo.click() }, cn.logo_key ? "Cambiar logo (PNG)" : "Subir logo (PNG)"), logo,
+        h("button", { class: "btn small", type: "button", onclick: async () => { try { await api(`/api/admin/canales/${cn.id}/probar-aviso`, { method: "POST" }); toast("Aviso enviado"); } catch (e) { toast(e.message, true); } } }, "Probar aviso"),
+        h("label", { class: "switch" }, (() => { const c = h("input", { type: "checkbox" }); c.checked = st.activo; c.addEventListener("change", () => (st.activo = c.checked)); return c; })(), "Activo")) : null),
+    h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cancelar"),
+      h("button", { class: "btn primary", type: "button", onclick: async (e) => {
+        const b = e.currentTarget; b.disabled = true;
+        try {
+          await api(`/api/admin/canales/${encodeURIComponent(st.id || cn?.id || "X")}`, { method: "PUT", body: { ...st, auto_aprobar: st.auto_aprobar === "" ? null : Number(st.auto_aprobar) } });
+          cerrarModal(); toast("Canal guardado"); recargar();
+        } catch (er) { toast(er.message, true); b.disabled = false; }
+      } }, "Guardar")));
+  modal.classList.add("ancho");
 }
 
 ruta();

@@ -1,5 +1,6 @@
 // Cliente de nanobananaapi.ai — https://docs.nanobananaapi.ai
 import { config } from "../config.js";
+import { senal } from "../contexto.js";
 
 const BASE = "https://api.nanobananaapi.ai/api/v1";
 
@@ -13,7 +14,7 @@ async function pedir(path, init = {}) {
     res = await fetch(BASE + path, {
       ...init,
       headers: { Authorization: `Bearer ${config.nanoBananaKey}`, "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(30000),
+      signal: senal(30000),
     });
   } catch {
     throw new ErrorNB("No hubo conexión con Nano Banana.", { reintentable: true });

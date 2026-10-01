@@ -5,15 +5,15 @@ import { all } from "./db.js";
 export const normal = (s) => String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
 
 const COLUMNAS = {
-  nombre: ["nombre", "titulo", "titulo interno", "episodio", "capitulo", "id"],
-  canal: ["canal"],
-  sinopsis: ["sinopsis", "historia", "resumen", "trama", "descripcion"],
-  giro: ["giro", "giro principal", "traicion", "conflicto"],
-  momento: ["momento", "momento cumbre", "momento mas fuerte", "escena", "escena portada", "portada"],
-  desenlace: ["desenlace", "final", "como termina"],
-  escenario: ["escenario", "lugar", "locacion"],
-  notas: ["notas", "notas para gancho", "comentarios"],
-  actores: ["actores", "cast", "reparto", "elenco"],
+  nombre: ["nombre", "titulo", "titulo interno", "episodio", "capitulo", "id", "name", "title", "episode", "nome", "episodio"],
+  canal: ["canal", "channel"],
+  sinopsis: ["sinopsis", "historia", "resumen", "trama", "descripcion", "synopsis", "story", "summary", "plot", "sinopse", "resumo", "enredo"],
+  giro: ["giro", "giro principal", "traicion", "conflicto", "twist", "conflict", "reviravolta", "conflito"],
+  momento: ["momento", "momento cumbre", "momento mas fuerte", "escena", "escena portada", "portada", "key moment", "thumbnail scene", "scene", "cena", "momento chave"],
+  desenlace: ["desenlace", "final", "como termina", "ending", "desfecho"],
+  escenario: ["escenario", "lugar", "locacion", "setting", "location", "cenario", "local"],
+  notas: ["notas", "notas para gancho", "comentarios", "notes", "observacoes"],
+  actores: ["actores", "cast", "reparto", "elenco", "actors", "atores"],
 };
 const MAPA = Object.fromEntries(Object.entries(COLUMNAS).flatMap(([k, vs]) => vs.map((v) => [v, k])));
 

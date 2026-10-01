@@ -242,3 +242,30 @@ tr.malo td { color: var(--muted); text-decoration: line-through; }
 .fotos div { position: relative; }
 .fotos img { aspect-ratio: 1; object-fit: cover; border-radius: 8px; width: 100%; }
 .fotos button { position: absolute; top: 3px; right: 3px; border: 0; border-radius: 6px; background: rgba(0,0,0,.7); color: #fff; font-size: .7rem; padding: 1px 6px; cursor: pointer; }
+
+/* ---------- Automático ---------- */
+.subir { border: 2px dashed var(--line); border-radius: var(--radius); padding: 34px 20px; text-align: center; display: grid; gap: 10px; justify-items: center; cursor: pointer; background: var(--panel); }
+.subir.on, .subir:hover { border-color: var(--accent); background: var(--accent-soft); }
+.subir b { font-family: var(--display); font-size: 1.3rem; }
+.cola { display: grid; gap: 10px; }
+.item { display: grid; grid-template-columns: 160px minmax(0, 1fr) auto; gap: 14px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px; text-decoration: none; color: var(--fg); }
+.item:hover { border-color: var(--accent); }
+.item .img { aspect-ratio: 16/9; border-radius: 8px; overflow: hidden; background: var(--panel-2); display: grid; place-items: center; color: var(--muted); font-size: .75rem; }
+.item .img img { width: 100%; height: 100%; object-fit: cover; }
+@media (max-width: 640px) { .item { grid-template-columns: 1fr; } }
+.pasos { display: flex; gap: 4px; flex-wrap: wrap; font-size: .72rem; }
+.pasos span { padding: 2px 8px; border-radius: 99px; background: var(--panel-2); color: var(--muted); }
+.pasos span.hecho { color: var(--good); }
+.pasos span.ahora { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+.barra-subida { height: 6px; background: var(--panel-2); border-radius: 99px; overflow: hidden; width: min(420px, 100%); }
+.barra-subida i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s; }
+.idioma { font-size: .7rem; font-weight: 800; letter-spacing: .06em; padding: 2px 7px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); }
+.trad { font-size: .8rem; color: var(--muted); font-style: italic; }
+.canal-card { display: grid; gap: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+.canal-card .logo { height: 34px; max-width: 120px; object-fit: contain; }
+.form-canal { display: grid; gap: 14px; }
+.form-canal .dos { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 560px) { .form-canal .dos { grid-template-columns: 1fr; } }
+dialog.ancho { width: min(820px, calc(100vw - 32px)); }
+.stack > .tag, .stack > .pasos { justify-self: start; }
+.canal-card .row { flex-wrap: nowrap; align-items: start; }

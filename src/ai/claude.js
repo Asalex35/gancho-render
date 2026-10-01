@@ -3,8 +3,12 @@ import { z } from "zod";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { PLAYBOOK } from "./playbook.js";
 import { config } from "../config.js";
+import { als, semaforo } from "../contexto.js";
 
-const client = new Anthropic({ apiKey: config.anthropicKey, maxRetries: 4 });
+// Pocos reintentos aquí: la cola ya reintenta con espera. Tiempo máximo por llamada: 5 min.
+const client = new Anthropic({ apiKey: config.anthropicKey, maxRetries: 2, timeout: 300e3 });
+// Límite real de llamadas simultáneas a Claude en este proceso (todas las colas juntas).
+const turno = semaforo(Number(process.env.CLAUDE_CONCURRENCY || 4));
 
 // ---------- Esquemas ----------
 const Calificacion = z.object({
@@ -15,7 +19,8 @@ const Calificacion = z.object({
   claridad_visual: z.number().int().describe("1-10"),
 });
 const Propuesta = z.object({
-  titulo: z.string(),
+  titulo: z.string().describe("En el idioma del canal"),
+  traduccion: z.string().describe("Traducción del título al español si el canal NO es en español; si es en español, cadena vacía"),
   formula: z.enum(["A", "B", "C", "D", "Libre"]),
   composicion: z.enum(["Triangulo", "Amenaza", "Victima sola", "Otra"]),
   concepto: z.string().describe("Qué se ve en la portada, en español, 1-2 frases"),
@@ -41,6 +46,28 @@ const Paquete = z.object({
   hashtags: z.array(z.string()),
   titulos_alternos: z.array(z.string()).describe("2 variantes del título elegido para prueba A/B"),
 });
+const AnalisisVideo = z.object({
+  titulo_interno: z.string().describe("Nombre corto del episodio en español"),
+  sinopsis: z.string().describe("En español, 6-10 líneas"),
+  giro: z.string(), momento: z.string(), desenlace: z.string(), escenario: z.string(),
+  personajes: z.array(z.object({
+    personaje: z.string().describe("Nombre del personaje en la historia"),
+    edad: z.string(),
+    rol: z.enum(["transgresor", "victima", "testigo", "villano", "otro"]),
+    vestuario: z.string(),
+    descripcion_visual: z.string().describe("Cómo se ve: cabello, complexión, ropa (sin nombres de personas reales)"),
+    cuadros: z.array(z.number().int()).describe("Números de cuadro donde se le ve la cara claramente, el mejor primero (máx. 3)"),
+  })),
+  cuadros_momento: z.array(z.number().int()).describe("Cuadros que muestran el lugar y ambiente del momento cumbre (máx. 2)"),
+  calidad: z.enum(["completa", "parcial"]).describe("parcial si faltó información (sin diálogo, video incompleto)"),
+});
+const SugerenciaCanal = z.object({
+  voz: z.string().describe("Cómo se escriben los títulos de este canal, 1-3 frases en español"),
+  estilo_visual: z.string().describe("Rasgos visuales de sus portadas, 1-3 frases en español"),
+  hashtags: z.array(z.string()).describe("3-4 hashtags fijos en el idioma del canal"),
+  tags_base: z.array(z.string()).describe("6-8 tags base en el idioma del canal"),
+});
+
 const Brief = z.object({
   giro: z.string(), momento: z.string(), desenlace: z.string(), escenario: z.string(),
   personajes: z.array(z.object({
@@ -66,7 +93,7 @@ async function llamar({ content, schema, effort = "medium", maxTokens = 16000 })
   const fmt = zodOutputFormat(schema);
   let res;
   try {
-    res = await client.beta.messages.create({
+    res = await turno(() => client.beta.messages.create({
       model: config.claudeModel,
       max_tokens: maxTokens,
       betas: ["server-side-fallback-2026-07-01"],
@@ -74,8 +101,9 @@ async function llamar({ content, schema, effort = "medium", maxTokens = 16000 })
       system: SYSTEM,
       output_config: { effort, format: { type: fmt.type, schema: fmt.schema } },
       messages: [{ role: "user", content }],
-    });
+    }, { signal: als.getStore()?.signal }));
   } catch (e) {
+    if (e instanceof Anthropic.APIUserAbortError) throw e;
     if (e instanceof Anthropic.RateLimitError || e instanceof Anthropic.InternalServerError || e instanceof Anthropic.APIConnectionError) {
       throw new ErrorIA("Claude está saturado; se reintentará.", { reintentable: true });
     }
@@ -83,16 +111,27 @@ async function llamar({ content, schema, effort = "medium", maxTokens = 16000 })
     throw e;
   }
   if (res.stop_reason === "refusal") throw new ErrorIA("Claude no quiso generar esto. Revisa que el brief no tenga contenido con menores o violencia explícita.");
-  if (res.stop_reason === "max_tokens") throw new ErrorIA("La respuesta de Claude se cortó.", { reintentable: true });
+  if (res.stop_reason === "max_tokens") throw new ErrorIA("La respuesta de Claude salió demasiado larga. Acorta la sinopsis o el guion.");
   const text = res.content.filter((b) => b.type === "text").map((b) => b.text).join("");
   return fmt.parse(text);
+}
+
+const IDIOMAS = { es: "español", en: "inglés", pt: "portugués de Brasil" };
+export const nombreIdioma = (c) => IDIOMAS[c] || c;
+
+function describirCanal(canal) {
+  const ej = (canal.ejemplos || []).slice(0, 12);
+  return `CANAL: ${canal.nombre}
+IDIOMA DEL CANAL: ${nombreIdioma(canal.idioma)}${canal.pais ? ` · público de ${canal.pais}` : ""}
+VOZ DE LOS TÍTULOS: ${canal.voz || "sigue el playbook"}
+ESTILO VISUAL DE SUS PORTADAS: ${canal.estilo_visual || "sigue el playbook"}${ej.length ? `\nTÍTULOS QUE YA FUNCIONARON EN ESTE CANAL:\n${ej.map((t) => `- ${t}`).join("\n")}` : ""}`;
 }
 
 function describirEpisodio(ep, canal) {
   const b = ep.brief;
   const cast = (ep.cast || []).map((c) =>
     `- ${c.personaje} (${c.edad || "edad no indicada"}), rol: ${c.rol}, vestuario: ${c.vestuario || "libre"}, actor: ${c.actorNombre || "sin asignar"}`).join("\n");
-  return `CANAL: ${canal.nombre}. Voz del canal: ${canal.voz}
+  return `${describirCanal(canal)}
 
 SINOPSIS: ${b.sinopsis}
 GIRO PRINCIPAL: ${b.giro || "(dedúcelo)"}
@@ -133,7 +172,9 @@ En prompt_imagen describe: escena, posición de cada personaje (por nombre), emo
 color saturado, luz, "no text, no letters, no watermark", espacio libre abajo a la izquierda para el logo. Formato 16:9.
 ENCUADRE OBLIGATORIO: plano medio cerrado, las caras principales ocupan al menos un tercio del alto de la imagen,
 máximo 3 personas protagonistas, extras desenfocados al fondo, nada importante en la esquina inferior derecha.
-Escribe porque_funciona y riesgo cortos y directos: el equipo los lee rápido.`;
+Escribe porque_funciona y riesgo cortos y directos: el equipo los lee rápido.
+ANTES DE RESPONDER revisa cada título: si insinúa o menciona algo del DESENLACE (cómo termina, quién regresa, embarazos, castigos, éxitos futuros), reescríbelo.
+IDIOMA: títulos en ${nombreIdioma(canal.idioma)}${canal.idioma !== "es" ? " (y su traducción al español en traduccion)" : ""}; todo lo demás para el equipo en español.`;
   return llamar({ content, schema: RespuestaPropuestas, effort: "high" });
 }
 
@@ -185,9 +226,9 @@ export async function generarPaquete(ep, canal, propuesta) {
 TÍTULO ELEGIDO: "${propuesta.titulo}"
 PORTADA: ${propuesta.concepto}
 
-TAREA: Escribe el paquete de publicación.
+TAREA: Escribe el paquete de publicación TODO en ${nombreIdioma(canal.idioma)}, como nativo${canal.pais ? ` de ${canal.pais}` : ""}.
 - descripcion_gancho: 2 líneas que enganchen sin revelar el final.
-- tags: 12-15 tags (canal, tema, emociones, formatos como "historias de vida", "capítulos completos", "telenovelas", programas del mismo género como "la rosa de guadalupe"). Que no pasen de 450 caracteres en total.
+- tags: 12-15 tags (canal, tema, emociones, formatos como "historias de vida", "capítulos completos", "telenovelas", programas del mismo género que busque ese público). Incluye estos tags base si existen: ${(canal.tags_base || []).join(", ") || "ninguno"}. Que no pasen de 450 caracteres en total.
 - hashtags: 3-5 con #.
 - titulos_alternos: 2 variantes del título para prueba A/B.`;
   const r = await llamar({ content, schema: Paquete, effort: "low", maxTokens: 8000 });
@@ -197,4 +238,45 @@ TAREA: Escribe el paquete de publicación.
     hashtags,
     descripcion: [r.descripcion_gancho, canal.descripcion_fija, canal.disclaimer, hashtags.join(" ")].filter(Boolean).join("\n\n"),
   };
+}
+
+
+// ---------- Flujo automático: entender el episodio desde el video ----------
+export async function analizarVideo({ canal, transcripcion, hojas, nombreArchivo, notas }) {
+  const content = [
+    ...hojas.flatMap((hj) => [
+      { type: "text", text: `Hoja de cuadros ${hj.desde}-${hj.hasta} (cada cuadro tiene su número arriba a la izquierda):` },
+      { type: "image", source: { type: "base64", media_type: "image/jpeg", data: hj.base64 } },
+    ]),
+    {
+      type: "text",
+      text: `${describirCanal(canal)}
+
+ARCHIVO: ${nombreArchivo || "sin nombre"}
+NOTAS DEL EQUIPO: ${notas || "ninguna"}
+
+TRANSCRIPCIÓN DEL EPISODIO${transcripcion ? "" : " (no disponible: deduce la historia solo con los cuadros)"}:
+${transcripcion ? transcripcion.slice(0, 180000) : "-"}
+
+TAREA: Eres el editor que vio el episodio completo. Escribe el brief para hacer la portada:
+sinopsis, giro principal, momento más fuerte para la portada, desenlace y escenario (todo en español).
+Lista los personajes importantes (máx. 4). Para cada uno elige en las hojas los cuadros donde su cara se ve
+clara y de frente o 3/4, el mejor primero. Identifícalos por su papel en la historia y su apariencia
+(ropa, peinado, edad), NUNCA por quiénes son en la vida real. Si no estás seguro de qué cuadro es de quién, no lo pongas.
+En cuadros_momento elige los cuadros que mejor muestran el lugar del momento cumbre.`,
+    },
+  ];
+  return llamar({ content, schema: AnalisisVideo, effort: "high", maxTokens: 12000 });
+}
+
+// ---------- Ayuda para crear canales ----------
+export async function sugerirCanal({ nombre, idioma, pais, ejemplos }) {
+  const content = `CANAL NUEVO: ${nombre}
+IDIOMA: ${nombreIdioma(idioma)}${pais ? ` · público de ${pais}` : ""}
+TÍTULOS QUE MEJOR LE HAN FUNCIONADO:
+${ejemplos.map((t) => `- ${t}`).join("\n")}
+
+TAREA: Describe la voz de sus títulos (qué fórmula del playbook usan, persona, largo, palabras gancho) y el estilo visual
+que deberían tener sus portadas según el playbook. Propón hashtags fijos y tags base en el idioma del canal.`;
+  return llamar({ content, schema: SugerenciaCanal, effort: "low", maxTokens: 4000 });
 }

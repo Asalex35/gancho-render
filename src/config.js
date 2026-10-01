@@ -33,8 +33,9 @@ export const config = {
   imageResolution: env.IMAGE_RESOLUTION || "1K",
   creditsPerImage: num(env.CREDITS_PER_IMAGE, 8),
   limits: {
-    userDailyImages: num(env.DAILY_IMAGE_LIMIT, 150),
-    orgDailyImages: num(env.ORG_DAILY_IMAGE_LIMIT, 1500),
+    // Coherente con los lotes: 200 episodios × 3 portadas = 600, más reintentos.
+    userDailyImages: num(env.DAILY_IMAGE_LIMIT, 700),
+    orgDailyImages: num(env.ORG_DAILY_IMAGE_LIMIT, 3000),
     maxEpisodesPerBatch: num(env.MAX_EPISODES_PER_BATCH, 200),
   },
   concurrency: {
@@ -57,6 +58,9 @@ export const config = {
 config.refsPublicas = config.storage.driver === "s3" || !/localhost|127\.0\.0\.1/.test(PUBLIC_BASE_URL);
 
 // Web y worker separados no comparten disco: las imágenes tienen que ir a S3/R2.
+if (config.prod && config.storage.driver === "local" && !env.DATA_DIR) {
+  throw new Error("En producción usa S3/R2 (S3_BUCKET) o un disco persistente montado en DATA_DIR; si no, las portadas se pierden en cada deploy.");
+}
 if (config.role !== "all" && config.storage.driver === "local" && config.prod) {
   throw new Error("Con ROLE=web/worker separados necesitas S3/R2 (S3_BUCKET). O usa ROLE=all en un solo servicio.");
 }

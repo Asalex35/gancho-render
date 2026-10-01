@@ -2,10 +2,14 @@ import pg from "pg";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import crypto from "node:crypto";
 import { config } from "./config.js";
 
 const ssl = /localhost|127\.0\.0\.1/.test(config.databaseUrl) ? false : { rejectUnauthorized: false };
-export const pool = new pg.Pool({ connectionString: config.databaseUrl, ssl, max: Number(process.env.DB_POOL || 10) });
+export const pool = new pg.Pool({
+  connectionString: config.databaseUrl, ssl, max: Number(process.env.DB_POOL || 10),
+  statement_timeout: 60000, connectionTimeoutMillis: 10000,
+});
 pool.on("error", (e) => console.error("Postgres:", e.message));
 
 export const q = (sql, params) => pool.query(sql, params);
@@ -27,12 +31,19 @@ export async function tx(fn) {
   }
 }
 
+// Solo aplica el esquema si cambió (los ALTER bloquean tablas aunque no hagan nada).
 export async function migrar() {
   const dir = path.dirname(fileURLToPath(import.meta.url));
   const sql = await fs.readFile(path.join(dir, "schema.sql"), "utf8");
-  // Candado para que dos instancias no migren al mismo tiempo.
+  const hash = crypto.createHash("sha256").update(sql).digest("hex");
+  await pool.query("CREATE TABLE IF NOT EXISTS gancho_meta (k text PRIMARY KEY, v text NOT NULL)");
+  const actual = await one("SELECT v FROM gancho_meta WHERE k = 'schema'");
+  if (actual?.v === hash) return;
   await tx(async (c) => {
-    await c.query("SELECT pg_advisory_xact_lock(424242)");
+    await c.query("SELECT pg_advisory_xact_lock(424242)"); // dos instancias no migran a la vez
+    await c.query("SET LOCAL lock_timeout = '10s'");
     await c.query(sql);
+    await c.query("INSERT INTO gancho_meta (k, v) VALUES ('schema', $1) ON CONFLICT (k) DO UPDATE SET v = $1", [hash]);
   });
+  console.log("Esquema de base de datos actualizado.");
 }

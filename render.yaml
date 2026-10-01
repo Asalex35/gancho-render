@@ -15,9 +15,9 @@ envVarGroups:
       - key: CREDITS_PER_IMAGE
         value: "8"
       - key: DAILY_IMAGE_LIMIT
-        value: "150"
+        value: "700"
       - key: ORG_DAILY_IMAGE_LIMIT
-        value: "1500"
+        value: "3000"
       - key: SESSION_SECRET
         generateValue: true
       - key: CALLBACK_SECRET
@@ -28,6 +28,16 @@ envVarGroups:
         sync: false
       - key: PUBLIC_BASE_URL
         sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: FAL_KEY
+        sync: false
+      - key: TRANSCRIBE_API_KEY
+        sync: false
+      - key: NOTIFY_WEBHOOK_URL
+        sync: false
+      - key: VIDEO_RETENTION_DAYS
+        value: "7"
       - key: S3_BUCKET
         sync: false
       - key: S3_ENDPOINT
@@ -59,7 +69,7 @@ services:
   - type: worker
     name: gancho-worker
     runtime: node
-    plan: starter
+    plan: standard   # ffmpeg necesita CPU y memoria para leer videos largos
     buildCommand: npm ci
     startCommand: node server.js
     envVars:

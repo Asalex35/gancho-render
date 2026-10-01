@@ -65,7 +65,8 @@ export const olvidarUsuario = (id) => cache.delete(id);
 export async function usuarioDe(req) {
   const raw = (req.headers.cookie || "").split(";").map((c) => c.trim()).find((c) => c.startsWith(`${COOKIE}=`));
   if (!raw) return null;
-  const [data, firma] = decodeURIComponent(raw.slice(COOKIE.length + 1)).split(".");
+  let data, firma;
+  try { [data, firma] = decodeURIComponent(raw.slice(COOKIE.length + 1)).split("."); } catch { return null; }
   if (!data || !firma) return null;
   const esperada = firmar(data);
   if (firma.length !== esperada.length || !crypto.timingSafeEqual(Buffer.from(firma), Buffer.from(esperada))) return null;

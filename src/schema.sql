@@ -110,3 +110,23 @@ CREATE TABLE IF NOT EXISTS uso (
   textos   int NOT NULL DEFAULT 0,
   PRIMARY KEY (dia, usuario)
 );
+
+-- v2: canales multi-idioma y flujo automático
+ALTER TABLE canales ADD COLUMN IF NOT EXISTS idioma text NOT NULL DEFAULT 'es';
+ALTER TABLE canales ADD COLUMN IF NOT EXISTS pais text NOT NULL DEFAULT '';
+ALTER TABLE canales ADD COLUMN IF NOT EXISTS estilo_visual text NOT NULL DEFAULT '';
+ALTER TABLE canales ADD COLUMN IF NOT EXISTS ejemplos jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE canales ADD COLUMN IF NOT EXISTS tags_base jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE canales ADD COLUMN IF NOT EXISTS modelo text NOT NULL DEFAULT 'nb2';
+ALTER TABLE canales ADD COLUMN IF NOT EXISTS auto_aprobar int;          -- calificación mínima para aprobar sola (NULL = nunca)
+ALTER TABLE canales ADD COLUMN IF NOT EXISTS webhook_url text;          -- avisos a Slack / Google Chat / Discord
+
+ALTER TABLE episodios ADD COLUMN IF NOT EXISTS origen text NOT NULL DEFAULT 'manual';   -- manual, lote, auto
+ALTER TABLE episodios ADD COLUMN IF NOT EXISTS video jsonb;                             -- key, etapa, duracion, cuadros...
+ALTER TABLE episodios ADD COLUMN IF NOT EXISTS aprobacion text;                         -- por_aprobar, auto, manual
+CREATE INDEX IF NOT EXISTS episodios_origen_idx ON episodios (origen, actualizado DESC);
+
+-- v3: robustez
+ALTER TABLE lotes ADD COLUMN IF NOT EXISTS notificado boolean NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS propuestas_ep_all_idx ON propuestas (episodio_id);
+CREATE INDEX IF NOT EXISTS episodios_estado_idx ON episodios (estado, actualizado) WHERE estado IN ('en_cola','pensando','procesando');

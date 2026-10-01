@@ -3,6 +3,8 @@ import sharp from "sharp";
 import * as storage from "./storage.js";
 
 sharp.cache(false);
+// Protección contra "bombas" de imagen: un PNG pequeño de 15000×15000 px agotaría la memoria.
+const LIM = { limitInputPixels: 40e6, failOn: "error" };
 sharp.concurrency(2);
 
 // Reconoce el tipo por los bytes, no por la extensión.
@@ -15,24 +17,24 @@ export function tipoImagen(buf) {
 
 // Fotos del cast: se normalizan a JPG de máx. 1600 px y sin metadatos (quita GPS y datos de la cámara).
 export async function normalizarFoto(buf) {
-  return sharp(buf, { failOn: "error" }).rotate().resize(1600, 1600, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 88 }).toBuffer();
+  return sharp(buf, LIM).rotate().resize(1600, 1600, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 88 }).toBuffer();
 }
 
 export async function miniatura(buf) {
-  return sharp(buf).resize(480, 270, { fit: "cover" }).jpeg({ quality: 78 }).toBuffer();
+  return sharp(buf, LIM).resize(480, 270, { fit: "cover" }).jpeg({ quality: 78 }).toBuffer();
 }
 
 // Para mandarle a Claude: máx. 1568 px (lo que Claude aprovecha) y menos de 5 MB.
 export async function paraClaude(buf) {
-  return sharp(buf).resize(1568, 1568, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
+  return sharp(buf, LIM).resize(1568, 1568, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
 }
 
 // Portada final para YouTube: 1280x720, JPG < 2 MB, con el logo del canal abajo a la izquierda.
 export async function portadaFinal(imagenKey, logoKey) {
-  const base = sharp(await storage.leer(imagenKey)).resize(1280, 720, { fit: "cover" });
+  const base = sharp(await storage.leer(imagenKey), LIM).resize(1280, 720, { fit: "cover" });
   const capas = [];
   if (logoKey) {
-    const logo = await sharp(await storage.leer(logoKey)).resize({ width: 256, height: 140, fit: "inside" }).png().toBuffer();
+    const logo = await sharp(await storage.leer(logoKey), LIM).resize({ width: 256, height: 140, fit: "inside" }).png().toBuffer();
     const meta = await sharp(logo).metadata();
     capas.push({ input: logo, left: 38, top: 720 - meta.height - 36 });
   }
