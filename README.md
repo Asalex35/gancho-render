@@ -45,7 +45,8 @@ NANOBANANA_MOCK=1 npm start   # imágenes falsas, no gasta créditos
 3. Render → **New → Blueprint** → elige el repo (`render.yaml` crea web, worker y Postgres).
 4. Llena las variables marcadas: keys de Claude y Nano Banana, `ADMIN_USER`, `ADMIN_PASSWORD`, `PUBLIC_BASE_URL` y las de R2.
 5. En el bucket de R2 → **Settings → CORS**: permite `PUT` desde tu dominio (para subir videos directo al bucket).
-6. Opcional: `TRANSCRIBE_API_KEY` (Groq) para transcribir el audio; sin ella usa los subtítulos o el guion que se suban.
+6. `ELEVENLABS_API_KEY` para transcribir (máx. 40 min por episodio) y saber quién habla; con eso el detector de caras
+   (local, gratis, revisa ≈5 min del video) recorta la cara y el medio cuerpo de cada personaje. Respaldo opcional: `TRANSCRIBE_API_KEY` (Groq/OpenAI).
 7. **Settings → Custom Domain** en `gancho-web` y crea el CNAME que te indique Render.
 
 Más barato para empezar: un solo servicio web con `ROLE=all` + Postgres (sin R2, con disco persistente en `DATA_DIR`).

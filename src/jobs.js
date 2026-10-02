@@ -17,7 +17,8 @@ import * as ia from "./ai/claude.js";
 import * as imagen from "./ai/imagen.js";
 import { tipoImagen, miniatura, paraClaude } from "./imagenes.js";
 import * as video from "./video.js";
-import { transcribir, transcripcionDisponible } from "./transcribir.js";
+import { transcribir, transcripcionDisponible, guionConHablantes } from "./transcribir.js";
+import * as caras from "./caras.js";
 import { notificar } from "./notificar.js";
 import { als, senal } from "./contexto.js";
 
@@ -135,7 +136,7 @@ async function referencias(ep, data, { conEscena = true } = {}) {
   const refs = [];
   for (const c of ep.cast || []) {
     if (!nombres.includes(normal(c.personaje))) continue;
-    let fotos = (c.fotos || []).slice(0, 2);
+    let fotos = (c.fotos || []).slice(0, 3);
     if (!fotos.length && c.actorId) fotos = ((await one("SELECT fotos FROM actores WHERE id = $1", [c.actorId]))?.fotos || []).slice(0, 2);
     if (fotos.length) refs.push({ personaje: c.personaje, fotos });
   }
@@ -401,6 +402,9 @@ async function hPaquete({ episodioId, propuestaId, usuario, automatico }) {
 }
 
 // ---------- 0. Ingesta: del video al brief (flujo automático) ----------
+// 1) Transcribe máx. 40 min (inicio, mitad y final si es más largo) con quién habla y cuándo.
+// 2) Revisa ≈5 min de video donde hablan los personajes principales y detecta caras (local, gratis).
+// 3) Recorta cara y medio cuerpo de los mejores cuadros; Claude dice qué recorte es de qué personaje.
 async function hIngesta({ episodioId, usuario }) {
   const ep = await repo.episodio(episodioId);
   if (!ep || ep.estado !== "procesando") return;
@@ -409,39 +413,101 @@ async function hIngesta({ episodioId, usuario }) {
   const etapa = (e, extra = {}) => q(`UPDATE episodios SET video = video || $2::jsonb, actualizado = now() WHERE id = $1 AND estado = 'procesando'`, [episodioId, { etapa: e, ...extra }]);
   const dir = await video.carpetaTemporal();
   const nuevos = [];
+  const guardar = async (buf) => { const k = await storage.guardar("cuadros", buf, "jpg"); nuevos.push(k); return k; };
   try {
     await etapa("leyendo");
     const entrada = await storage.entradaFfmpeg(ep.video.key);
     const segundos = await video.duracion(entrada);
     if (segundos < 20) throw publico("El video dura menos de 20 segundos.");
-    const cuadros = await video.extraerCuadros(entrada, segundos, dir);
-    if (cuadros.length < 6) throw publico("No pude sacar cuadros del video.");
+    const duracionMin = Math.round(segundos / 60);
+
+    // Cuadros generales (para entender lugares y escenas).
+    const generales = await video.extraerCuadros(entrada, segundos, dir, 24);
+    if (generales.length < 6) throw publico("No pude sacar cuadros del video.");
     const keys = {};
-    for (const c of cuadros) { keys[c.n] = await storage.guardar("cuadros", await fs.readFile(c.archivo), "jpg"); nuevos.push(keys[c.n]); }
+    for (const c of generales) keys[c.n] = await guardar(await fs.readFile(c.archivo));
     await etapa("transcribiendo", { duracion: Math.round(segundos) });
 
+    // Transcripción (subtítulos subidos > audio limitado a 40 min).
     let texto = ep.video.subtitulos ? video.textoDeSubtitulos(ep.video.subtitulos) : "";
     let fuente = texto ? "subtitulos" : "ninguna";
+    let frases = [];
+    let parcial = false;
     if (!texto && transcripcionDisponible()) {
-      // Sin pista de audio o con la transcripción caída, seguimos solo con los cuadros.
-      try { texto = await transcribir(await video.extraerAudio(entrada, dir), canal.idioma); fuente = "audio"; }
-      catch (e) { console.warn("Transcripción omitida:", e.message); texto = ""; fuente = "ninguna"; }
+      try {
+        const tramos = video.planTranscripcion(segundos);
+        parcial = tramos.length > 1;
+        const r = await transcribir(await video.audioDeTramos(entrada, tramos, dir), canal.idioma);
+        frases = r.frases.map((f) => ({ ...f, inicio: video.tiempoReal(f.inicio, tramos), fin: video.tiempoReal(f.fin, tramos) }));
+        texto = frases.length ? guionConHablantes(frases) : r.texto;
+        fuente = r.proveedor;
+      } catch (e) { console.warn("Transcripción omitida:", e.message); texto = ""; fuente = "ninguna"; }
     }
-    await etapa("analizando", { fuente });
-    const r = await ia.analizarVideo({ canal, transcripcion: texto, hojas: await video.hojasDeContacto(cuadros), nombreArchivo: ep.video.nombre, notas: ep.brief.notas });
+
+    // Detector de caras en ≈5 min del video.
+    await etapa("caras", { fuente, minutosTranscritos: Math.round(video.planTranscripcion(segundos).reduce((s, t) => s + t.dur, 0) / 60) });
+    const candidatos = [];
+    try {
+      const ventanas = video.planCaras(segundos, frases);
+      const evaluados = [];
+      for (const [i, v] of ventanas.entries()) {
+        for (const c of await video.cuadrosDeVentana(entrada, v, dir, `v${i}`)) {
+          const ev = await caras.evaluarCuadro(c.archivo).catch(() => null);
+          if (ev) evaluados.push({ ...c, ...ev });
+        }
+      }
+      // Los mejores por hablante (o en general), separados al menos 8 s para no repetir la misma toma.
+      const grupos = {};
+      for (const e of evaluados) (grupos[e.hablante || "-"] ??= []).push(e);
+      const porGrupo = Object.keys(grupos).length > 1 ? 5 : 20;
+      for (const lista of Object.values(grupos)) {
+        const elegidos = [];
+        for (const e of lista.sort((a, b) => b.calidad - a.calidad)) {
+          if (elegidos.length >= porGrupo) break;
+          if (elegidos.some((x) => Math.abs(x.t - e.t) < 8)) continue;
+          elegidos.push(e);
+        }
+        candidatos.push(...elegidos);
+      }
+      for (const [i, c] of candidatos.sort((a, b) => a.t - b.t).entries()) {
+        c.n = i + 1;
+        Object.assign(c, await caras.recortes(c.archivo, c.cara));
+      }
+    } catch (e) { console.warn("Detector de caras omitido:", e.message); candidatos.length = 0; }
+
+    await etapa("analizando");
+    const r = await ia.analizarVideo({
+      canal, transcripcion: texto, parcial, duracionMin, conHablantes: frases.some((f) => f.hablante),
+      hojas: await video.hojasDeContacto(generales), hojasCaras: candidatos.length ? await video.hojaDeCaras(candidatos) : [],
+      nombreArchivo: ep.video.nombre, notas: ep.brief.notas,
+    });
     await repo.sumarUso(usuario, "textos");
 
-    const k = (n) => keys[n];
-    const cast = r.personajes.slice(0, 4).map((p) => ({
-      personaje: p.personaje, edad: p.edad, rol: p.rol, vestuario: p.vestuario, descripcion: p.descripcion_visual,
-      fotos: p.cuadros.map(k).filter(Boolean).slice(0, 2), actorId: null, actorNombre: null, tieneFotos: p.cuadros.some(k),
-    }));
+    // Guarda solo los recortes que Claude asignó a un personaje.
+    const porNumero = Object.fromEntries(candidatos.map((c) => [c.n, c]));
+    const cast = [];
+    for (const p of r.personajes.slice(0, 4)) {
+      const mias = p.caras.map((n) => porNumero[n]).filter(Boolean);
+      let fotos = [];
+      if (mias.length) {
+        const mejor = mias[0];
+        fotos = [await guardar(mejor.rostro), await guardar(mejor.medio)];
+        const intensa = porNumero[p.cara_intensa];
+        if (intensa && intensa !== mejor) fotos.push(await guardar(intensa.rostro));
+      } else {
+        fotos = p.cuadros.map((n) => keys[n]).filter(Boolean).slice(0, 2);
+      }
+      cast.push({ personaje: p.personaje, edad: p.edad, rol: p.rol, vestuario: p.vestuario, descripcion: p.descripcion_visual,
+        hablante: p.hablante || null, fotos, actorId: null, actorNombre: null, tieneFotos: fotos.length > 0 });
+    }
     const brief = { ...ep.brief, sinopsis: r.sinopsis, giro: r.giro, momento: r.momento, desenlace: r.desenlace, escenario: r.escenario,
-      cuadros_momento: r.cuadros_momento.map(k).filter(Boolean).slice(0, 2) };
-    const viejos = ep.video.cuadros || [];
+      duracion_min: duracionMin, cuadros_momento: r.cuadros_momento.map((n) => keys[n]).filter(Boolean).slice(0, 2) };
+    const viejos = [...(ep.video.cuadros || [])];
     const { rowCount } = await q(`UPDATE episodios SET titulo = CASE WHEN titulo = '' OR titulo LIKE 'Video:%' THEN $2 ELSE titulo END, brief = $3, "cast" = $4,
         video = video || $5::jsonb, estado = 'en_cola', actualizado = now() WHERE id = $1 AND estado = 'procesando'`,
-      [episodioId, r.titulo_interno, brief, JSON.stringify(cast), { etapa: "listo", calidad: r.calidad, cuadros: Object.values(keys), transcripcion: texto.slice(0, 200000) }]);
+      [episodioId, r.titulo_interno, brief, JSON.stringify(cast), {
+        etapa: "listo", calidad: r.calidad, cuadros: [...nuevos], carasRevisadas: candidatos.length, transcripcion: texto.slice(0, 200000),
+      }]);
     if (!rowCount) throw publico("El episodio cambió mientras se procesaba.");
     nuevos.length = 0; // ya pertenecen al episodio
     for (const v of viejos) await storage.borrar(v); // cuadros de un intento anterior

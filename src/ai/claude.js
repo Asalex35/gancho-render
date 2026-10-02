@@ -56,7 +56,10 @@ const AnalisisVideo = z.object({
     rol: z.enum(["transgresor", "victima", "testigo", "villano", "otro"]),
     vestuario: z.string(),
     descripcion_visual: z.string().describe("Cómo se ve: cabello, complexión, ropa (sin nombres de personas reales)"),
-    cuadros: z.array(z.number().int()).describe("Números de cuadro donde se le ve la cara claramente, el mejor primero (máx. 3)"),
+    hablante: z.string().describe("Letra del hablante en la transcripción (A, B…) o cadena vacía si no se sabe"),
+    caras: z.array(z.number().int()).describe("Números C de los recortes de cara que son de este personaje, el mejor primero (máx. 3). Vacío si ninguno"),
+    cara_intensa: z.number().int().describe("Número C del recorte con la emoción más fuerte de este personaje (llanto, ira, miedo); 0 si ninguno"),
+    cuadros: z.array(z.number().int()).describe("Solo si no hay recortes C: números de cuadro general donde se le ve la cara claramente (máx. 3)"),
   })),
   cuadros_momento: z.array(z.number().int()).describe("Cuadros que muestran el lugar y ambiente del momento cumbre (máx. 2)"),
   calidad: z.enum(["completa", "parcial"]).describe("parcial si faltó información (sin diálogo, video incompleto)"),
@@ -133,7 +136,7 @@ function describirEpisodio(ep, canal) {
     `- ${c.personaje} (${c.edad || "edad no indicada"}), rol: ${c.rol}, vestuario: ${c.vestuario || "libre"}, actor: ${c.actorNombre || "sin asignar"}`).join("\n");
   return `${describirCanal(canal)}
 
-SINOPSIS: ${b.sinopsis}
+SINOPSIS: ${b.sinopsis}${b.duracion_min ? `\nDURACIÓN DEL EPISODIO: ${b.duracion_min} min` : ""}
 GIRO PRINCIPAL: ${b.giro || "(dedúcelo)"}
 MOMENTO CUMBRE: ${b.momento || "(dedúcelo)"}
 DESENLACE (no revelar nunca): ${b.desenlace || "(desconocido)"}
@@ -242,10 +245,14 @@ TAREA: Escribe el paquete de publicación TODO en ${nombreIdioma(canal.idioma)},
 
 
 // ---------- Flujo automático: entender el episodio desde el video ----------
-export async function analizarVideo({ canal, transcripcion, hojas, nombreArchivo, notas }) {
+export async function analizarVideo({ canal, transcripcion, hojas, hojasCaras = [], conHablantes, parcial, duracionMin, nombreArchivo, notas }) {
   const content = [
     ...hojas.flatMap((hj) => [
-      { type: "text", text: `Hoja de cuadros ${hj.desde}-${hj.hasta} (cada cuadro tiene su número arriba a la izquierda):` },
+      { type: "text", text: `Hoja de cuadros generales ${hj.desde}-${hj.hasta} (número arriba a la izquierda):` },
+      { type: "image", source: { type: "base64", media_type: "image/jpeg", data: hj.base64 } },
+    ]),
+    ...hojasCaras.flatMap((hj) => [
+      { type: "text", text: `Recortes de caras C${hj.desde}-C${hj.hasta}${conHablantes ? " (la letra es quién estaba hablando en ese momento; puede ser un plano de reacción de otra persona)" : ""}:` },
       { type: "image", source: { type: "base64", media_type: "image/jpeg", data: hj.base64 } },
     ]),
     {
@@ -253,17 +260,21 @@ export async function analizarVideo({ canal, transcripcion, hojas, nombreArchivo
       text: `${describirCanal(canal)}
 
 ARCHIVO: ${nombreArchivo || "sin nombre"}
+DURACIÓN: ${duracionMin ? `${duracionMin} min` : "desconocida"}
 NOTAS DEL EQUIPO: ${notas || "ninguna"}
 
-TRANSCRIPCIÓN DEL EPISODIO${transcripcion ? "" : " (no disponible: deduce la historia solo con los cuadros)"}:
+TRANSCRIPCIÓN DEL EPISODIO${transcripcion ? (parcial ? " (parcial: inicio, mitad y final del episodio)" : "") : " (no disponible: deduce la historia solo con los cuadros)"}${conHablantes ? " — cada línea dice [hablante minuto]" : ""}:
 ${transcripcion ? transcripcion.slice(0, 180000) : "-"}
 
 TAREA: Eres el editor que vio el episodio completo. Escribe el brief para hacer la portada:
 sinopsis, giro principal, momento más fuerte para la portada, desenlace y escenario (todo en español).
-Lista los personajes importantes (máx. 4). Para cada uno elige en las hojas los cuadros donde su cara se ve
-clara y de frente o 3/4, el mejor primero. Identifícalos por su papel en la historia y su apariencia
-(ropa, peinado, edad), NUNCA por quiénes son en la vida real. Si no estás seguro de qué cuadro es de quién, no lo pongas.
-En cuadros_momento elige los cuadros que mejor muestran el lugar del momento cumbre.`,
+Lista los personajes importantes (máx. 4).${conHablantes ? `
+Usa la transcripción para saber qué letra de hablante es cada personaje (por cómo los llaman y lo que dicen).` : ""}
+Para cada personaje elige en los recortes C las caras que son suyas (la mejor primero: nítida, de frente o 3/4, sin tapar)
+y la de emoción más fuerte. Compara peinado, ropa, edad y rasgos entre recortes para no mezclar personas.
+Identifícalos por su papel en la historia y su apariencia, NUNCA por quiénes son en la vida real.
+Si no estás seguro de qué recorte es de quién, no lo pongas. Si no hay recortes útiles, usa "cuadros" de las hojas generales.
+En cuadros_momento elige los cuadros generales que mejor muestran el lugar del momento cumbre.`,
     },
   ];
   return llamar({ content, schema: AnalisisVideo, effort: "high", maxTokens: 12000 });

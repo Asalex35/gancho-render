@@ -14,13 +14,14 @@ const COLUMNAS = {
   escenario: ["escenario", "lugar", "locacion", "setting", "location", "cenario", "local"],
   notas: ["notas", "notas para gancho", "comentarios", "notes", "observacoes"],
   actores: ["actores", "cast", "reparto", "elenco", "actors", "atores"],
+  duracion: ["duracion", "duracion min", "minutos", "duration", "duracao"],
 };
 const MAPA = Object.fromEntries(Object.entries(COLUMNAS).flatMap(([k, vs]) => vs.map((v) => [v, k])));
 
 export const PLANTILLA = [
-  ["nombre", "sinopsis", "giro", "momento", "desenlace", "escenario", "actores", "notas"],
-  ["La boda de Valeria", "Valeria trabaja doble turno para pagar su boda. Su hermana Camila se acerca a su novio Andrés...", "Su hermana se fuga con el novio el día de la boda", "Valeria llorando en el piso de la iglesia", "Valeria abre su propio negocio y Camila regresa a pedir perdón", "Iglesia de pueblo", "Valeria=Nombre Actriz; Camila=Nombre Actriz 2; Andrés=Nombre Actor", ""],
-  ["El taxista", "Un taxista descubre que su esposa lo engaña con su jefe...", "", "", "", "", "", "Solo la sinopsis también funciona"],
+  ["nombre", "duracion", "sinopsis", "giro", "momento", "desenlace", "escenario", "actores", "notas"],
+  ["La boda de Valeria", "45", "Valeria trabaja doble turno para pagar su boda. Su hermana Camila se acerca a su novio Andrés...", "Su hermana se fuga con el novio el día de la boda", "Valeria llorando en el piso de la iglesia", "Valeria abre su propio negocio y Camila regresa a pedir perdón", "Iglesia de pueblo", "Valeria=Nombre Actriz; Camila=Nombre Actriz 2; Andrés=Nombre Actor", ""],
+  ["El taxista", "", "Un taxista descubre que su esposa lo engaña con su jefe...", "", "", "", "", "", "Solo la sinopsis también funciona"],
 ];
 
 export async function interpretar(texto, canales) {
@@ -69,6 +70,7 @@ export async function interpretar(texto, canales) {
         desenlace: String(r.desenlace || "").trim().slice(0, 600),
         escenario: String(r.escenario || "").trim().slice(0, 200),
         notas: String(r.notas || "").trim().slice(0, 600),
+        ...(Number(r.duracion) >= 1 && Number(r.duracion) <= 600 ? { duracion_min: Math.round(Number(r.duracion)) } : {}),
       },
       reparto,
       errores, avisos,

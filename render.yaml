@@ -32,6 +32,12 @@ envVarGroups:
         sync: false
       - key: FAL_KEY
         sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: TRANSCRIBE_MAX_MINUTES
+        value: "40"
+      - key: FACE_SCAN_SECONDS
+        value: "300"
       - key: TRANSCRIBE_API_KEY
         sync: false
       - key: NOTIFY_WEBHOOK_URL

@@ -166,9 +166,9 @@ export function crearApp() {
       const personaje = limpiar(c.personaje, 60);
       if (!personaje) return null;
       // Cuadros del video (flujo automático): solo llaves válidas de la carpeta "cuadros".
-      const fotos = (Array.isArray(c.fotos) ? c.fotos : []).filter((k) => typeof k === "string" && k.startsWith("cuadros/") && storage.keyValida(k)).slice(0, 2);
+      const fotos = (Array.isArray(c.fotos) ? c.fotos : []).filter((k) => typeof k === "string" && k.startsWith("cuadros/") && storage.keyValida(k)).slice(0, 3);
       return { actorId: actor?.id || null, actorNombre: actor?.nombre || null, personaje, edad: limpiar(c.edad, 20),
-        rol: ROLES.includes(c.rol) ? c.rol : "otro", vestuario: limpiar(c.vestuario, 200), descripcion: limpiar(c.descripcion, 300),
+        rol: ROLES.includes(c.rol) ? c.rol : "otro", vestuario: limpiar(c.vestuario, 200), descripcion: limpiar(c.descripcion, 300), hablante: limpiar(c.hablante, 4) || null,
         fotos: actor ? [] : fotos, tieneFotos: Boolean(actor?.fotos?.length || fotos.length) };
     }).filter(Boolean);
   }
@@ -179,6 +179,9 @@ export function crearApp() {
       desenlace: limpiar(b.desenlace, 600), escenario: limpiar(b.escenario, 200), notas: limpiar(b.notas, 600),
       cuadros_momento: (Array.isArray(b.cuadros_momento) ? b.cuadros_momento : []).filter((k) => typeof k === "string" && k.startsWith("cuadros/") && storage.keyValida(k)).slice(0, 2),
     };
+    const dur = Math.round(Number(b.duracion_min));
+    if (b.duracion_min !== undefined && b.duracion_min !== "" && b.duracion_min !== null && !(dur >= 1 && dur <= 600)) throw publico("La duración debe ser en minutos, entre 1 y 600.");
+    if (dur >= 1 && dur <= 600) brief.duracion_min = dur;
     if (!brief.sinopsis) throw publico("Falta la sinopsis.");
     return { canal, modelo: Object.hasOwn(nb.MODELOS, b.modelo || "") ? b.modelo : "nb2", titulo: limpiar(b.titulo, 120) || brief.sinopsis.slice(0, 60), brief, cast: await armarCast(b.cast) };
   }

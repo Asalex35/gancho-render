@@ -225,7 +225,7 @@ async function vistaLoteNuevo() {
     h("div", { class: "grid2" },
       h("section", { class: "panel stack" },
         h("h2", {}, "1. Pega la lista"),
-        h("p", { class: "muted", style: { margin: 0 } }, "Una fila por episodio. Solo la sinopsis es obligatoria; Claude deduce lo demás. En \"actores\" escribe Personaje=Actor separados por punto y coma."),
+        h("p", { class: "muted", style: { margin: 0 } }, "Una fila por episodio. Solo la sinopsis es obligatoria; Claude deduce lo demás. Pon la duración en minutos en \"duracion\". En \"actores\" escribe Personaje=Actor separados por punto y coma."),
         texto,
         h("div", { class: "row" }, h("button", { class: "btn", type: "button", onclick: () => archivo.click() }, "O sube un CSV"), archivo)),
       h("section", { class: "panel stack" },
@@ -360,6 +360,7 @@ async function vistaEditor(id) {
 
   const btnGenerar = h("button", { class: "btn primary big", type: "submit" }, existente?.propuestas?.length ? "Guardar y generar 3 nuevas" : "Generar 3 propuestas");
   async function enviar(generarYa) {
+    if (!st.duracion_min) return toast("Escribe cuánto dura el episodio (en minutos).", true);
     st.cast = st.cast.filter((c) => c.personaje?.trim());
     btnGenerar.disabled = true;
     try {
@@ -380,6 +381,13 @@ async function vistaEditor(id) {
         h("h2", {}, "1. La historia"),
         h("label", {}, "Canal", seg(opcionesCanal(), st.canal, (v) => { st.canal = v; guardarBorrador(); })),
         campo("titulo", "Nombre interno", "Solo para encontrarlo aquí. No es el título de YouTube.", false, "Ej. La boda de Lucía"),
+        (() => {
+          const el = h("input", { type: "number", id: "f-duracion", min: "1", max: "600", step: "1", placeholder: "Ej. 45", style: { maxWidth: "160px" } });
+          el.value = st.duracion_min || "";
+          el.addEventListener("input", () => { st.duracion_min = el.value; guardarBorrador(); });
+          return h("label", {}, h("span", {}, "¿Cuánto dura el episodio? (minutos)"),
+            h("span", { class: "hint" }, "Ayuda a Gancho a ajustar título y descripción. Si pasa de 120 min, YouTube no lo dobla solo a otros idiomas."), el);
+        })(),
         campo("sinopsis", "Sinopsis", "De qué trata, en 5 a 10 líneas. Es lo único obligatorio.", true),
         campo("giro", "El giro principal", "Opcional: si lo dejas vacío, Claude lo deduce.", true, "Ej. Su hermana se fuga con el novio el día de la boda"),
         campo("momento", "El momento más fuerte", "La escena que iría en la portada.", true, "Ej. La novia llorando sola en el piso de la iglesia"),
@@ -471,6 +479,8 @@ function pintarEpisodio(p) {
       p.lote_id ? h("a", { href: `#/lote/${p.lote_id}`, style: { color: "inherit" } }, `← Lote · ${canalNombre(p.canal)}`)
         : p.origen === "auto" ? h("a", { href: "#/auto", style: { color: "inherit" } }, `← Automático · ${canalNombre(p.canal)}`) : canalNombre(p.canal),
       chipIdioma(canalIdioma(p.canal)),
+      p.brief?.duracion_min ? h("span", { class: `tag${p.brief.duracion_min > 120 ? " warn" : ""}`, title: p.brief.duracion_min > 120 ? "Más de 2 h: YouTube no hace el doblaje automático" : "" },
+        `${p.brief.duracion_min} min${p.brief.duracion_min > 120 ? " · sin doblaje automático" : ""}`) : null,
       p.aprobacion === "auto" ? h("span", { class: "tag ok" }, "Aprobada sola") : p.aprobacion === "por_aprobar" && !p.elegida ? h("span", { class: "tag warn" }, "Por aprobar") : null),
       h("h1", {}, p.titulo)),
     h("div", { class: "row" },
@@ -759,7 +769,7 @@ async function vistaAdmin() {
 }
 
 // ================= AUTOMÁTICO =================
-const ETAPAS = [["en_cola", "En fila"], ["leyendo", "Sacando cuadros"], ["transcribiendo", "Escuchando"], ["analizando", "Entendiendo la historia"], ["listo", "Haciendo portadas"]];
+const ETAPAS = [["en_cola", "En fila"], ["leyendo", "Sacando cuadros"], ["transcribiendo", "Escuchando (máx. 40 min)"], ["caras", "Buscando caras"], ["analizando", "Entendiendo la historia"], ["listo", "Haciendo portadas"]];
 function pasosVideo(etapa) {
   const i = ETAPAS.findIndex(([k]) => k === etapa);
   return h("div", { class: "pasos" }, ETAPAS.map(([k, t], j) => h("span", { class: j < i ? "hecho" : j === i ? "ahora" : "" }, j < i ? `✓ ${t}` : t)));
