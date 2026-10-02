@@ -66,7 +66,8 @@ const firmar = (key, exp) => crypto.createHmac("sha256", config.linkSecret).upda
 export function verificarEnlace(key, exp, sig) {
   if (!keyValida(key) || !sig || Number(exp) < Date.now()) return false;
   const esperada = firmar(key, Number(exp));
-  return sig.length === esperada.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(esperada));
+  const a = Buffer.from(String(sig)), b = Buffer.from(esperada);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 // ---------- Videos (archivos grandes) ----------

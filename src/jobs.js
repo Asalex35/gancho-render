@@ -35,12 +35,12 @@ const COLAS = {
   limpieza: { retryLimit: 1, expireInSeconds: 1800 },
   vigilante: { retryLimit: 0, expireInSeconds: 600 },
   ingesta: { retryLimit: 2, retryDelay: 60, retryBackoff: true, expireInSeconds: 5400 },
-  propuestas: { retryLimit: 3, retryDelay: 30, retryBackoff: true, expireInSeconds: 1800 },
+  propuestas: { retryLimit: 3, retryDelay: 30, retryBackoff: true, expireInSeconds: 2400 },
   imagen: { retryLimit: 3, retryDelay: 30, retryBackoff: true, expireInSeconds: 900 },
   revisar: { retryLimit: 5, retryDelay: 15, retryBackoff: true, expireInSeconds: 300 },
-  evaluar: { retryLimit: 3, retryDelay: 30, retryBackoff: true, expireInSeconds: 900 },
-  rehacer: { retryLimit: 3, retryDelay: 30, retryBackoff: true, expireInSeconds: 1800 },
-  paquete: { retryLimit: 3, retryDelay: 30, retryBackoff: true, expireInSeconds: 900 },
+  evaluar: { retryLimit: 3, retryDelay: 30, retryBackoff: true, expireInSeconds: 1500 },
+  rehacer: { retryLimit: 3, retryDelay: 30, retryBackoff: true, expireInSeconds: 2400 },
+  paquete: { retryLimit: 3, retryDelay: 30, retryBackoff: true, expireInSeconds: 1500 },
 };
 
 export async function iniciarCola() {
@@ -169,9 +169,13 @@ async function prepararRefs(refs) {
 
 async function hImagen({ propuestaId, usuario, extra, prioridad, evitar = [], cobrar }) {
   // Reclamo atómico: solo un trabajo puede pasar de "en_cola" a "generando" (evita pagar dos veces).
+  // "inicio" funciona como ficha: si mientras tanto alguien rehace o restaura, nuestras escrituras ya no aplican.
+  const inicio = Date.now();
   const p = await one(`UPDATE propuestas SET imagen = imagen || jsonb_build_object('estado','generando','inicio',$2::bigint,'taskId',null,'error',null,'usuario',$3::text)
-      WHERE id = $1 AND NOT archivada AND imagen->>'estado' = 'en_cola' RETURNING *`, [propuestaId, Date.now(), usuario]);
+      WHERE id = $1 AND NOT archivada AND imagen->>'estado' = 'en_cola' RETURNING *`, [propuestaId, inicio, usuario]);
   if (!p) return;
+  const MIO = `id = $1 AND imagen->>'estado' = 'generando' AND (imagen->>'inicio')::bigint = ${inicio}`;
+  let pagada = false;
   try {
     const ep = await repo.episodio(p.episodio_id);
     const refs = await referencias(ep, p.data);
@@ -180,23 +184,28 @@ async function hImagen({ propuestaId, usuario, extra, prioridad, evitar = [], co
       prompt, refs: await prepararRefs(refs), modelo: ep.modelo, evitar,
       alCambiar: (prov, err) => avisarCambio(ep.canal, prov, err),
     });
-    if (cobrar) await repo.sumarUso(usuario, "imagenes");
+    pagada = true;
     const intentos = (p.imagen.intentos || 0) + 1;
+    const taskId = r.taskId || `${r.proveedor}_${inicio}`;
+    const { rowCount } = await q(`UPDATE propuestas SET imagen = imagen || $2::jsonb WHERE ${MIO}`, [propuestaId,
+      { taskId, proveedor: r.proveedor, intentos, conReferencias: refs.length > 0, evitar }]);
+    if (cobrar) await repo.sumarUso(usuario, "imagenes").catch(() => {});
+    if (!rowCount) return; // la propuesta cambió mientras se pintaba: se descarta este resultado
     if (r.taskId) {
-      await q(`UPDATE propuestas SET imagen = imagen || $2::jsonb WHERE id = $1`, [propuestaId,
-        { taskId: r.taskId, proveedor: r.proveedor, intentos, conReferencias: refs.length > 0, evitar }]);
       await repo.tocarEpisodio(p.episodio_id);
-      await enviar("revisar", { propuestaId, taskId: r.taskId, prioridad, evitar }, { prioridad, startAfter: r.taskId.startsWith("mock_") ? 2 : 20 });
+      await enviar("revisar", { propuestaId, taskId, prioridad, evitar }, { prioridad, startAfter: taskId.startsWith("mock_") ? 2 : 20 });
     } else {
-      const marca = `${r.proveedor}_${Date.now()}`;
-      await q(`UPDATE propuestas SET imagen = imagen || $2::jsonb WHERE id = $1`, [propuestaId,
-        { taskId: marca, proveedor: r.proveedor, intentos, conReferencias: refs.length > 0, evitar }]);
-      await guardarResultado(propuestaId, marca, r.buffer, prioridad);
+      await guardarResultado(propuestaId, taskId, r.buffer, prioridad);
     }
   } catch (e) {
-    // Devuelve el reclamo para que el reintento (o el vigilante) pueda tomarlo.
-    await q(`UPDATE propuestas SET imagen = imagen || '{"estado":"en_cola"}'::jsonb WHERE id = $1 AND imagen->>'estado' = 'generando' AND imagen->>'taskId' IS NULL`, [propuestaId]);
-    throw e;
+    if (!pagada) {
+      // Devuelve el reclamo para que el reintento (o el vigilante) pueda tomarlo.
+      await q(`UPDATE propuestas SET imagen = imagen || '{"estado":"en_cola"}'::jsonb WHERE ${MIO}`, [propuestaId]);
+      throw e;
+    }
+    // La imagen ya se pagó pero no se pudo guardar: no reintentar (evita pagar sin fin mientras falla el almacenamiento).
+    console.error("[imagen] pagada pero no guardada:", e.message);
+    throw publico("La imagen se generó pero no se pudo guardar. Revisa el almacenamiento y dale reintentar.");
   }
 }
 
@@ -218,10 +227,11 @@ async function avisarCambio(canalId, proveedor, error) {
 }
 
 // Si Nano Banana falla o tarda demasiado, se pasa la imagen al siguiente proveedor.
-async function aRespaldo({ propuestaId, prioridad, evitar = [] }, motivo) {
+async function aRespaldo({ propuestaId, taskId, prioridad, evitar = [] }, motivo = "Nano Banana no pudo crear la imagen.") {
   const quedan = imagen.orden().filter((x) => ![...evitar, "nanobanana"].includes(x));
   if (!quedan.length) return fallaImagen({ propuestaId }, publico(motivo));
-  const r = await q(`UPDATE propuestas SET imagen = imagen || '{"estado":"en_cola","taskId":null}'::jsonb WHERE id = $1 AND imagen->>'estado' = 'generando'`, [propuestaId]);
+  const r = await q(`UPDATE propuestas SET imagen = imagen || '{"estado":"en_cola","taskId":null}'::jsonb
+    WHERE id = $1 AND imagen->>'estado' = 'generando' AND imagen->>'taskId' = $2`, [propuestaId, taskId]);
   if (!r.rowCount) return;
   const p = await repo.propuesta(propuestaId);
   imagen.registrarFalla("nanobanana");
@@ -244,7 +254,7 @@ async function guardarResultado(propuestaId, taskId, buf, prioridad) {
   if (!ext) throw new Error("El archivo recibido no es una imagen");
   const key = await storage.guardar("portadas", buf, ext);
   const mini = await storage.guardar("mini", await miniatura(buf), "jpg");
-  const { rowCount } = await q(`UPDATE propuestas SET imagen = imagen || $3::jsonb WHERE id = $1 AND imagen->>'taskId' = $2 AND NOT archivada`,
+  const { rowCount } = await q(`UPDATE propuestas SET imagen = imagen || $3::jsonb WHERE id = $1 AND imagen->>'taskId' = $2 AND imagen->>'estado' = 'generando' AND NOT archivada`,
     [propuestaId, taskId, { estado: "lista", key, mini, error: null }]);
   if (!rowCount) { await storage.borrar(key); await storage.borrar(mini); return; }
   const p = await repo.propuesta(propuestaId);
@@ -272,11 +282,13 @@ async function hRevisar(data) {
     return enviar("revisar", data, { prioridad, startAfter: 8 });
   }
   if (r.estado === "error") return aRespaldo(data, r.error);
-  await guardarResultado(propuestaId, taskId, r.buffer || (await descargar(r.url)), prioridad);
+  const buf = r.buffer || (await descargar(r.url));
+  try { await guardarResultado(propuestaId, taskId, buf, prioridad); }
+  catch (e) { e.almacenamiento = true; throw e; } // la imagen existe: no se debe pagar otra en un respaldo
 }
 
 // ---------- 4. Evaluar la portada (Claude con visión) ----------
-async function hEvaluar({ propuestaId, key, prioridad }) {
+async function hEvaluar({ propuestaId, key, prioridad, sinReintento }) {
   const r0 = await q(`UPDATE propuestas SET evaluando = true WHERE id = $1 AND NOT archivada AND imagen->>'key' = $2 AND imagen->>'estado' = 'lista' RETURNING id`, [propuestaId, key]);
   if (!r0.rowCount) return;
   let ev;
@@ -290,14 +302,21 @@ async function hEvaluar({ propuestaId, key, prioridad }) {
     if (!ev) await q("UPDATE propuestas SET evaluando = false WHERE id = $1", [propuestaId]);
   }
   const p = await repo.propuesta(propuestaId);
-  const reintentar = !ev.aprobada && (p.imagen.intentos || 1) < 2;
-  await q("UPDATE propuestas SET evaluando = false WHERE id = $1", [propuestaId]);
-  const { rowCount } = await q(`UPDATE propuestas SET evaluacion = $3,
+  const ep = await one("SELECT elegida, eligiendo FROM episodios WHERE id = $1", [p.episodio_id]);
+  // No se repinta sola si el usuario solo cambió el título, ni si ya está elegida o se está eligiendo.
+  const reintentar = !ev.aprobada && (p.imagen.intentos || 1) < 2 && !sinReintento && ep.elegida !== propuestaId && !ep.eligiendo;
+  const fila = await one(`UPDATE propuestas SET evaluacion = $3, evaluando = false,
       imagen = CASE WHEN $4 THEN imagen || jsonb_build_object('autoReintento', $5::jsonb, 'estado', 'en_cola') ELSE imagen END
-    WHERE id = $1 AND imagen->>'key' = $2 AND imagen->>'estado' = 'lista'`, [propuestaId, key, ev, reintentar, JSON.stringify(ev.problemas)]);
+    WHERE id = $1 AND imagen->>'key' = $2 AND imagen->>'estado' = 'lista' RETURNING id`, [propuestaId, key, ev, reintentar, JSON.stringify(ev.problemas)]);
+  if (!fila) await q("UPDATE propuestas SET evaluando = false WHERE id = $1", [propuestaId]);
   await repo.tocarEpisodio(p.episodio_id);
-  if (!rowCount) return;
-  if (reintentar) return enviar("imagen", { propuestaId, usuario: p.imagen.usuario, extra: ev.problemas.join("; "), prioridad, cobrar: true }, { prioridad });
+  if (!fila) return;
+  if (reintentar) {
+    // La versión con defectos se guarda (se puede restaurar) en vez de perderse.
+    await q("INSERT INTO versiones (propuesta_id, data, imagen, evaluacion, feedback) VALUES ($1,$2,$3,$4,$5)",
+      [propuestaId, p.data, p.imagen, ev, { objetivo: "portada", razones: ["Revisión automática"], comentario: ev.problemas.join("; ") }]);
+    return enviar("imagen", { propuestaId, usuario: p.imagen.usuario, extra: ev.problemas.join("; "), prioridad, cobrar: true }, { prioridad });
+  }
   await quizaAutoElegir(p.episodio_id);
 }
 
@@ -350,7 +369,7 @@ async function hRehacer({ propuestaId, objetivo, razones, comentario, usuario, p
   });
   if (!hecho) return;
   if (objetivo === "titulo") {
-    if (p.imagen.key && p.imagen.estado === "lista") await enviar("evaluar", { propuestaId, key: p.imagen.key, prioridad }, { prioridad });
+    if (p.imagen.key && p.imagen.estado === "lista") await enviar("evaluar", { propuestaId, key: p.imagen.key, prioridad, sinReintento: true }, { prioridad });
   } else await enviar("imagen", { propuestaId, usuario, prioridad }, { prioridad });
 }
 
@@ -456,16 +475,26 @@ async function hVigilante() {
       AND ${viejo} RETURNING episodio_id`);
   n.evaluar = evaluando.length; evaluando.forEach((r) => tocados.add(r.episodio_id));
   // Imágenes sin trabajo: se vuelven a encolar (el reclamo atómico evita duplicados).
-  const imgs = await all(`SELECT p.id, p.imagen, e.creado_por FROM propuestas p JOIN episodios e ON e.id = p.episodio_id
+  const imgs = await all(`SELECT p.id, p.episodio_id, p.imagen, e.creado_por FROM propuestas p JOIN episodios e ON e.id = p.episodio_id
     WHERE NOT p.archivada AND p.imagen->>'estado' IN ('en_cola','generando')
       AND coalesce((p.imagen->>'inicio')::bigint, 0) < $1 AND (e.actualizado < now() - interval '10 minutes' OR e.id = ANY($2))
       AND NOT ${VIVO("imagen", "propuestaId", "p.id")} AND NOT ${VIVO("revisar", "propuestaId", "p.id")}`, [Date.now() - 15 * 60e3, [...tocados]]);
   for (const p of imgs) {
+    const reparaciones = (p.imagen.reparaciones || 0) + 1;
+    const cond = `id = $1 AND imagen->>'estado' = $2 AND coalesce(imagen->>'inicio', '') = coalesce($3, '')`;
+    const args = [p.id, p.imagen.estado, p.imagen.inicio == null ? null : String(p.imagen.inicio)];
+    if (reparaciones > 2) {
+      // Ya se intentó reparar dos veces: algo está mal (almacenamiento, proveedor). Se marca para revisión humana.
+      await q(`UPDATE propuestas SET imagen = imagen || '{"estado":"error","error":"Se atoró varias veces. Revisa el almacenamiento y dale reintentar."}'::jsonb WHERE ${cond}`, args);
+      tocados.add(p.episodio_id);
+      continue;
+    }
     if (p.imagen.estado === "generando" && p.imagen.taskId && p.imagen.proveedor === "nanobanana") {
-      await enviar("revisar", { propuestaId: p.id, taskId: p.imagen.taskId, evitar: p.imagen.evitar || [] }, { prioridad: PRIORIDAD.lote });
+      const r = await q(`UPDATE propuestas SET imagen = imagen || jsonb_build_object('reparaciones', $4::int) WHERE ${cond}`, [...args, reparaciones]);
+      if (r.rowCount) await enviar("revisar", { propuestaId: p.id, taskId: p.imagen.taskId, evitar: p.imagen.evitar || [] }, { prioridad: PRIORIDAD.lote });
     } else {
-      await q(`UPDATE propuestas SET imagen = imagen || '{"estado":"en_cola","taskId":null}'::jsonb WHERE id = $1`, [p.id]);
-      await enviar("imagen", { propuestaId: p.id, usuario: p.imagen.usuario || p.creado_por, evitar: p.imagen.evitar || [] }, { prioridad: PRIORIDAD.lote });
+      const r = await q(`UPDATE propuestas SET imagen = imagen || jsonb_build_object('estado','en_cola','taskId',null,'reparaciones',$4::int) WHERE ${cond}`, [...args, reparaciones]);
+      if (r.rowCount) await enviar("imagen", { propuestaId: p.id, usuario: p.imagen.usuario || p.creado_por, evitar: p.imagen.evitar || [] }, { prioridad: PRIORIDAD.lote });
     }
   }
   n.imagenes = imgs.length;
@@ -476,22 +505,28 @@ async function hVigilante() {
 
 export async function iniciarWorkers() {
   const c = config.concurrency;
-  await trabajo("ingesta", hIngesta, async ({ episodioId }, e) => {
+  await trabajo("ingesta", hIngesta, async ({ episodioId, usuario }, e) => {
     await q(`UPDATE episodios SET estado = 'error', error = $2, video = video || '{"etapa":"error"}'::jsonb, actualizado = now() WHERE id = $1`,
       [episodioId, msg(e, "No se pudo procesar el video.")]);
     const ep = await one("SELECT titulo, canal FROM episodios WHERE id = $1", [episodioId]);
     if (ep) await notificar(await repo.canal(ep.canal), `🔴 No se pudo procesar el video de "${ep.titulo}": ${msg(e, "error desconocido")}`, `#/ep/${episodioId}`);
+    await repo.devolverCupo(usuario, 3);
   }, Number(process.env.VIDEO_CONCURRENCY || 2));
-  await trabajo("propuestas", hPropuestas, async ({ episodioId }, e) =>
-    q("UPDATE episodios SET estado = 'error', error = $2, actualizado = now() WHERE id = $1", [episodioId, msg(e, "No se pudieron crear las propuestas.")]), c.claude);
+  await trabajo("propuestas", hPropuestas, async ({ episodioId, usuario }, e) => {
+    await q("UPDATE episodios SET estado = 'error', error = $2, actualizado = now() WHERE id = $1", [episodioId, msg(e, "No se pudieron crear las propuestas.")]);
+    await repo.devolverCupo(usuario, 3); // las 3 portadas reservadas nunca se pidieron
+  }, c.claude);
   await trabajo("imagen", hImagen, fallaImagen, c.images);
-  await trabajo("revisar", hRevisar, (d, e) => aRespaldo(d, msg(e, "No se pudo descargar la imagen.")), c.polling);
+  await trabajo("revisar", hRevisar, (d, e) => (e?.almacenamiento
+    ? fallaImagen(d, publico("La imagen se generó pero no se pudo guardar. Revisa el almacenamiento y dale reintentar."))
+    : aRespaldo(d, msg(e, "No se pudo descargar la imagen de Nano Banana."))), c.polling);
   await trabajo("evaluar", hEvaluar, async ({ propuestaId }) => {
     await q("UPDATE propuestas SET evaluando = false WHERE id = $1", [propuestaId]);
     const p = await repo.propuesta(propuestaId);
     if (p) await quizaAutoElegir(p.episodio_id);
   }, c.claude);
-  await trabajo("rehacer", hRehacer, async ({ propuestaId }, e) => {
+  await trabajo("rehacer", hRehacer, async ({ propuestaId, objetivo, usuario }, e) => {
+    if (objetivo !== "titulo") await repo.devolverCupo(usuario, 1);
     await q("UPDATE propuestas SET rehaciendo = NULL, error_rehacer = $2 WHERE id = $1", [propuestaId, msg(e, "No se pudo rehacer. Intenta de nuevo.")]);
     const p = await repo.propuesta(propuestaId);
     if (p) await repo.tocarEpisodio(p.episodio_id);

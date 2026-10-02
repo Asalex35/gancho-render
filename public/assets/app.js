@@ -122,7 +122,9 @@ window.addEventListener("hashchange", ruta);
 
 // ================= INICIO =================
 async function vistaInicio() {
+  const t0 = navId;
   const [lotes, eps] = await Promise.all([api("/api/lotes"), api("/api/episodios")]);
+  if (!vigente(t0)) return;
   const estados = { borrador: ["Borrador", ""], en_cola: ["En cola", "warn"], pensando: ["Generando", "warn"], procesando: ["Viendo el video", "warn"], listo: ["Listo", "ok"], error: ["Con error", "bad"] };
   $app.replaceChildren(
     h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Inicio"), h("h1", {}, "¿Qué estrenamos hoy?")),
@@ -246,7 +248,7 @@ async function vistaLote(id, t = navId) {
   const json = JSON.stringify(l);
   if (json !== ultimoJSON) { ultimoJSON = json; pintarLote(l); }
   const ocupado = l.episodios.some((e) => ["en_cola", "pensando"].includes(e.estado) || e.eligiendo || e.propuestas.some((p) => ["en_cola", "generando"].includes(p.estado) || p.evaluando || p.rehaciendo));
-  if (ocupado) poll = setTimeout(() => vistaLote(id, t).catch(() => {}), 4000);
+  if (ocupado) poll = setTimeout(() => vistaLote(id, t).catch(() => { if (vigente(t)) poll = setTimeout(() => vistaLote(id, t).catch(() => {}), 15000); }), 4000);
   else cargarMe().catch(() => {});
 }
 
@@ -310,8 +312,10 @@ function pintarLote(l) {
 
 // ================= EDITOR (un episodio) =================
 async function vistaEditor(id) {
+  const t0 = navId;
   const actores = await api("/api/actores");
   const existente = id ? await api(`/api/episodios/${id}`) : null;
+  if (!vigente(t0)) return;
   const borradorKey = "gancho-borrador";
   const base = existente ? { ...existente.brief, titulo: existente.titulo, canal: existente.canal, modelo: existente.modelo, cast: existente.cast }
     : local.get(borradorKey) || { canal: me.canales[0]?.id, modelo: "nb2", cast: [{ personaje: "", rol: "transgresor" }, { personaje: "", rol: "testigo" }] };
@@ -432,7 +436,7 @@ async function vistaEpisodio(id, t = navId) {
   const json = JSON.stringify(p);
   if (json !== ultimoJSON && !editando) { ultimoJSON = json; pintarEpisodio(p); }
   const ocupado = ["en_cola", "pensando", "procesando"].includes(p.estado) || p.eligiendo || p.propuestas.some(OCUPADA);
-  if (ocupado) poll = setTimeout(() => vistaEpisodio(id, t).catch(() => {}), 3000);
+  if (ocupado) poll = setTimeout(() => vistaEpisodio(id, t).catch(() => { if (vigente(t)) poll = setTimeout(() => vistaEpisodio(id, t).catch(() => {}), 15000); }), 3000);
   else cargarMe().catch(() => {});
 }
 
@@ -459,6 +463,12 @@ function pintarEpisodio(p) {
   } else if (pensando) {
     partes.push(h("div", { class: "vacio" }, h("div", { class: "spin" }), h("h2", {}, p.estado === "en_cola" ? "En la fila" : "Claude está leyendo la historia"),
       h("p", { class: "muted", style: { margin: 0 } }, p.estado === "en_cola" ? "Empieza en cuanto se libere un lugar." : "Arma 3 propuestas en alrededor de un minuto; después las portadas se pintan solas.")));
+  } else if (p.estado === "error" && p.origen === "auto" && p.video?.etapa === "error") {
+    partes.push(h("div", { class: "vacio" }, h("h2", {}, "No se pudo leer el video"), h("p", { class: "muted" }, p.error || ""),
+      p.video?.key ? h("button", { class: "btn primary", type: "button", onclick: async (e) => {
+        const b = e.currentTarget; b.disabled = true;
+        try { await api(`/api/auto/${p.id}/reintentar`, { method: "POST" }); recargar(); } catch (er) { toast(er.message, true); b.disabled = false; }
+      } }, "Reintentar el video") : h("a", { class: "btn primary", href: "#/auto" }, "Subir el video de nuevo")));
   } else if (p.estado === "error") {
     partes.push(h("div", { class: "vacio" }, h("h2", {}, "No se pudieron crear las propuestas"), h("p", { class: "muted" }, p.error || ""), h("button", { class: "btn primary", type: "button", onclick: generar }, "Intentar de nuevo")));
   } else if (!p.propuestas.length) {
@@ -535,11 +545,11 @@ function tarjeta(p, x, i, recargar) {
       h("div", {}, h("div", { class: "eyebrow", style: { marginBottom: "6px" } }, "Por qué va a funcionar"), h("ul", { class: "why" }, razones.slice(0, 3).map((r) => h("li", {}, r)))),
       x.errorRehacer ? h("div", { class: "probs" }, x.errorRehacer) : null,
       h("div", { class: "acciones" },
-        h("button", { class: `btn ${elegida ? "" : "primary"} full`, type: "button", disabled: img.estado !== "lista" || Boolean(x.rehaciendo) || p.eligiendo,
+        h("button", { class: `btn ${elegida ? "" : "primary"} full`, type: "button", disabled: img.estado !== "lista" || OCUPADA(x) || p.eligiendo,
           onclick: async (e) => { const b = e.currentTarget; b.disabled = true; try { await api(`/api/propuestas/${x.id}/elegir`, { method: "POST" }); recargar(); } catch (er) { toast(er.message, true); b.disabled = false; } } },
           elegida ? "✓ Elegida · regenerar textos" : "Elegir esta"),
-        h("button", { class: "btn", type: "button", disabled: Boolean(x.rehaciendo), onclick: () => rehacer(x, recargar) }, x.rehaciendo ? "Rehaciendo…" : "Rehacer"),
-        h("button", { class: "btn", type: "button", disabled: !x.nVersiones, onclick: () => versiones(x, recargar) }, `Versiones${x.nVersiones ? ` (${x.nVersiones})` : ""}`)),
+        h("button", { class: "btn", type: "button", disabled: OCUPADA(x) || p.eligiendo, onclick: () => rehacer(x, recargar) }, x.rehaciendo ? "Rehaciendo…" : "Rehacer"),
+        h("button", { class: "btn", type: "button", disabled: !x.nVersiones || OCUPADA(x) || p.eligiendo, onclick: () => versiones(x, recargar) }, `Versiones${x.nVersiones ? ` (${x.nVersiones})` : ""}`)),
       h("details", {}, h("summary", { class: "eyebrow", style: { cursor: "pointer" } }, "Más detalles"),
         h("div", { class: "stack", style: { marginTop: "10px", gap: "10px" } }, movil,
           ev?.problemas?.length ? h("div", { class: "risk" }, h("b", {}, "Para mejorar: "), ev.problemas.slice(0, 2).join(" · ")) : null,
@@ -613,7 +623,9 @@ function paqueteFinal(p) {
 
 // ================= ACTORES =================
 async function vistaActores() {
+  const t0 = navId;
   const actores = await api("/api/actores");
+  if (!vigente(t0)) return;
   const recargar = () => vistaActores();
   const card = (a) => {
     const input = h("input", { type: "file", accept: "image/jpeg,image/png,image/webp", multiple: true, hidden: true, onchange: async () => {
@@ -639,7 +651,9 @@ async function vistaActores() {
 // ================= ADMINISTRACIÓN =================
 async function vistaAdmin() {
   if (me.rol !== "admin") { location.hash = "#/"; return; }
+  const t0 = navId;
   const [uso, usuarios] = await Promise.all([api("/api/admin/uso"), api("/api/admin/usuarios")]);
+  if (!vigente(t0)) return;
   const recargar = () => vistaAdmin();
   const hoy = uso.dias.filter((d) => d.dia === new Date().toISOString().slice(0, 10)).reduce((s, d) => s + d.imagenes, 0);
   const porEstado = Object.fromEntries(uso.estados.map((e) => [e.estado, e.n]));
@@ -704,55 +718,60 @@ function pasosVideo(etapa) {
 }
 
 let subiendo = null;
-async function vistaAuto(t = navId) {
-  const lista = await api("/api/auto");
-  if (!vigente(t)) return;
+// Los subtítulos elegidos viven fuera de la vista: el refresco de la lista no los borra.
+let subAuto = { texto: null, nombre: "" };
+async function vistaAuto() {
+  const t = navId;
   const st = local.get("gancho-auto") || { canal: me.canales[0]?.id, notas: "" };
   const guardar = () => local.set("gancho-auto", st);
-  let subtitulos = null, nombreSub = "";
 
   const input = h("input", { type: "file", accept: "video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.webm,.mkv,.m4v", multiple: true, hidden: true, onchange: () => subir([...input.files]) });
+  const subTxt = h("span", { class: "muted", style: { fontSize: ".85rem" } },
+    subAuto.nombre ? `Subtítulos: ${subAuto.nombre}` : me.transcripcion ? "Opcional: Gancho transcribe el audio solo." : "Sin transcripción automática: sube subtítulos o el guion para mejores resultados.");
   const sub = h("input", { type: "file", accept: ".srt,.vtt,.txt", hidden: true, onchange: async () => {
     const f = sub.files[0]; if (!f) return;
-    subtitulos = (await f.text()).slice(0, 400000); nombreSub = f.name; subTxt.textContent = `Subtítulos: ${f.name}`;
+    subAuto = { texto: (await f.text()).slice(0, 400000), nombre: f.name }; subTxt.textContent = `Subtítulos: ${f.name}`;
   } });
-  const subTxt = h("span", { class: "muted", style: { fontSize: ".85rem" } }, me.transcripcion ? "Opcional: Gancho transcribe el audio solo." : "Sin transcripción automática: sube subtítulos o el guion para mejores resultados.");
   const notas = h("input", { type: "text", id: "auto-notas", placeholder: "Notas opcionales para todos estos videos (ej. evitar armas)" });
   notas.value = st.notas || "";
   notas.addEventListener("input", () => { st.notas = notas.value; guardar(); });
   const progreso = h("div", { class: "stack", style: { gap: "6px", justifyItems: "center" } });
+  const listaBox = h("div", {}, h("div", { class: "vacio" }, h("div", { class: "spin" })));
 
   async function subir(files) {
     if (!files.length || subiendo) return;
     if (!st.canal) return toast("Elige el canal.", true);
     subiendo = true;
+    let ok = 0;
     for (const [n, f] of files.entries()) {
       const barraEl = h("i");
       progreso.replaceChildren(h("span", {}, `Subiendo ${n + 1} de ${files.length}: ${f.name}`), h("div", { class: "barra-subida" }, barraEl));
       try {
         const r = await api("/api/auto/subida", { method: "POST", body: { nombre: f.name, tamano: f.size } });
-        await new Promise((ok, no) => {
+        await new Promise((resolver, rechazar) => {
           const x = new XMLHttpRequest();
           if (r.url) { x.open("PUT", r.url); x.setRequestHeader("Content-Type", r.tipo); }
           else { x.open("PUT", `/api/auto/subida/${r.key}`); x.setRequestHeader("X-Gancho", "1"); }
           x.upload.onprogress = (e) => { if (e.lengthComputable) barraEl.style.width = `${(e.loaded / e.total) * 100}%`; };
-          x.onload = () => (x.status < 300 ? ok() : no(new Error(r.url ? "El almacenamiento rechazó el video. Revisa el CORS del bucket." : "No se pudo subir el video.")));
-          x.onerror = () => no(new Error("Se cortó la subida. Revisa tu conexión."));
+          x.onload = () => (x.status < 300 ? resolver() : rechazar(new Error(r.url ? "El almacenamiento rechazó el video. Revisa el CORS del bucket." : "No se pudo subir el video.")));
+          x.onerror = () => rechazar(new Error("Se cortó la subida. Revisa tu conexión."));
           x.send(f);
         });
-        await api("/api/auto/episodios", { method: "POST", body: { canal: st.canal, key: r.key, nombreArchivo: f.name, notas: st.notas, subtitulos: files.length === 1 ? subtitulos : null } });
+        await api("/api/auto/episodios", { method: "POST", body: { canal: st.canal, key: r.key, nombreArchivo: f.name, notas: st.notas, subtitulos: files.length === 1 ? subAuto.texto : null } });
+        ok++;
       } catch (e) { toast(`${f.name}: ${e.message}`, true); }
     }
     subiendo = null;
+    subAuto = { texto: null, nombre: "" };
     progreso.replaceChildren();
-    toast("Listo. Gancho ya está viendo los videos.");
-    if (location.hash.startsWith("#/auto")) { navId++; vistaAuto(); }
+    if (ok) toast(`Listo. Gancho ya está viendo ${ok === 1 ? "el video" : `${ok} videos`}.`);
+    if (vigente(t)) refrescar();
   }
 
   const zona = h("div", { class: "subir", tabindex: "0", role: "button", onclick: () => input.click(),
     onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } } },
     h("b", {}, "Suelta aquí el video final del episodio"),
-    h("span", { class: "muted" }, "Puedes soltar varios. MP4, MOV, WEBM o MKV · hasta 10 GB"), progreso);
+    h("span", { class: "muted" }, "Puedes soltar varios. MP4, MOV, WEBM o MKV · hasta 5 GB cada uno"), progreso);
   zona.addEventListener("dragover", (e) => { e.preventDefault(); zona.classList.add("on"); });
   zona.addEventListener("dragleave", () => zona.classList.remove("on"));
   zona.addEventListener("drop", (e) => { e.preventDefault(); zona.classList.remove("on"); subir([...e.dataTransfer.files]); });
@@ -762,12 +781,32 @@ async function vistaAuto(t = navId) {
     if (e.estado === "procesando") return pasosVideo(e.etapa);
     if (["en_cola", "pensando"].includes(e.estado)) return h("span", { class: "tag warn" }, "Haciendo propuestas");
     if (e.eligiendo) return h("span", { class: "tag warn" }, "Escribiendo descripción");
-    if (e.aprobacion === "auto") return h("span", { class: "tag ok" }, "Aprobada sola");
+    if (e.aprobacion === "auto" && e.elegida) return h("span", { class: "tag ok" }, "Aprobada sola");
     if (e.elegida) return h("span", { class: "tag ok" }, "Aprobada");
     if (e.aprobacion === "por_aprobar") return h("span", { class: "tag warn" }, "Por aprobar");
     return h("span", { class: "tag" }, "Pintando portadas");
   };
   const mins = (s) => (s ? `${Math.round(s / 60)} min` : "");
+
+  // Solo la lista se refresca; el formulario (notas, subtítulos, foco) no se toca.
+  async function refrescar() {
+    clearTimeout(poll);
+    let lista;
+    try { lista = await api("/api/auto"); }
+    catch { if (vigente(t)) poll = setTimeout(refrescar, 15000); return; }
+    if (!vigente(t)) return;
+    listaBox.replaceChildren(lista.length ? h("div", { class: "cola" }, lista.map((e) => h("a", { class: "item", href: `#/ep/${e.id}` },
+      h("div", { class: "img" }, e.portada ? h("img", { src: media(e.portada), alt: "", loading: "lazy" }) : "Sin portada"),
+      h("div", { class: "stack", style: { gap: "6px", minWidth: 0 } },
+        h("b", {}, e.titulo),
+        h("div", { class: "cifras" }, h("span", {}, canalNombre(e.canal)), chipIdioma(canalIdioma(e.canal)), e.duracion ? h("span", {}, mins(e.duracion)) : null,
+          e.fuente === "ninguna" ? h("span", { style: { color: "var(--mid)" } }, "Sin audio transcrito") : null, h("span", {}, `${e.creado_por} · ${fecha(e.actualizado)}`)),
+        estadoItem(e), e.error ? h("span", { style: { color: "var(--bad)", fontSize: ".82rem" } }, e.error) : null),
+      e.mejor != null ? h("b", { style: { color: colorScore(e.mejor), fontSize: "1.3rem", fontFamily: "var(--display)" } }, e.mejor) : h("span"))))
+      : h("div", { class: "vacio" }, h("p", { class: "muted", style: { margin: 0 } }, "Todavía no hay videos.")));
+    const ocupado = lista.some((e) => ["procesando", "en_cola", "pensando"].includes(e.estado) || e.eligiendo || (e.estado === "listo" && !e.elegida && e.aprobacion !== "por_aprobar"));
+    if (ocupado) poll = setTimeout(refrescar, 6000);
+  }
 
   $app.replaceChildren(
     h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Automático"), h("h1", {}, "Sube el video, Gancho hace el resto")),
@@ -780,24 +819,15 @@ async function vistaAuto(t = navId) {
         notas,
         h("p", { class: "muted", style: { margin: 0, fontSize: ".85rem" } }, "Gancho saca cuadros del video, entiende la historia, toma las caras de los actores y hace 3 portadas. Si el canal tiene aprobación automática y la mejor pasa la calificación, queda lista sola; si no, te avisa para que la apruebes."))),
     h("h2", { style: { marginBottom: "12px" } }, "Videos"),
-    lista.length ? h("div", { class: "cola" }, lista.map((e) => h("a", { class: "item", href: `#/ep/${e.id}` },
-      h("div", { class: "img" }, e.portada ? h("img", { src: media(e.portada), alt: "", loading: "lazy" }) : "Sin portada"),
-      h("div", { class: "stack", style: { gap: "6px", minWidth: 0 } },
-        h("b", {}, e.titulo),
-        h("div", { class: "cifras" }, h("span", {}, canalNombre(e.canal)), chipIdioma(canalIdioma(e.canal)), e.duracion ? h("span", {}, mins(e.duracion)) : null,
-          e.fuente === "ninguna" ? h("span", { style: { color: "var(--mid)" } }, "Sin audio transcrito") : null, h("span", {}, `${e.creado_por} · ${fecha(e.actualizado)}`)),
-        estadoItem(e), e.error ? h("span", { style: { color: "var(--bad)", fontSize: ".82rem" } }, e.error) : null),
-      e.mejor != null ? h("b", { style: { color: colorScore(e.mejor), fontSize: "1.3rem", fontFamily: "var(--display)" } }, e.mejor) : h("span"))))
-      : h("div", { class: "vacio" }, h("p", { class: "muted", style: { margin: 0 } }, "Todavía no hay videos.")));
-
-  const ocupado = lista.some((e) => ["procesando", "en_cola", "pensando"].includes(e.estado) || e.eligiendo || (e.estado === "listo" && !e.elegida && e.aprobacion !== "por_aprobar"));
-  clearTimeout(poll);
-  if (ocupado) poll = setTimeout(() => { if (!subiendo) vistaAuto(t).catch(() => {}); }, 6000);
+    listaBox);
+  await refrescar();
 }
 
 // ================= CANALES =================
 async function vistaCanales() {
+  const t0 = navId;
   const canales = await api("/api/canales");
+  if (!vigente(t0)) return;
   const admin = me.rol === "admin";
   const recargar = async () => { me = null; await cargarMe(); vistaCanales(); };
   $app.replaceChildren(
@@ -864,7 +894,7 @@ function editarCanal(cn, recargar) {
       h("button", { class: "btn primary", type: "button", onclick: async (e) => {
         const b = e.currentTarget; b.disabled = true;
         try {
-          await api(`/api/admin/canales/${encodeURIComponent(st.id || cn?.id || "X")}`, { method: "PUT", body: { ...st, auto_aprobar: st.auto_aprobar === "" ? null : Number(st.auto_aprobar) } });
+          await api(`/api/admin/canales/${encodeURIComponent(st.id || cn?.id || "X")}`, { method: "PUT", body: { ...st, nuevo: !cn, auto_aprobar: st.auto_aprobar === "" ? null : Number(st.auto_aprobar) } });
           cerrarModal(); toast("Canal guardado"); recargar();
         } catch (er) { toast(er.message, true); b.disabled = false; }
       } }, "Guardar")));

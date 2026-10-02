@@ -42,6 +42,7 @@ export async function migrar() {
   await tx(async (c) => {
     await c.query("SELECT pg_advisory_xact_lock(424242)"); // dos instancias no migran a la vez
     await c.query("SET LOCAL lock_timeout = '10s'");
+    await c.query("SET LOCAL statement_timeout = 0"); // crear índices en tablas grandes puede tardar
     await c.query(sql);
     await c.query("INSERT INTO gancho_meta (k, v) VALUES ('schema', $1) ON CONFLICT (k) DO UPDATE SET v = $1", [hash]);
   });

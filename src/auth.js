@@ -69,7 +69,8 @@ export async function usuarioDe(req) {
   try { [data, firma] = decodeURIComponent(raw.slice(COOKIE.length + 1)).split("."); } catch { return null; }
   if (!data || !firma) return null;
   const esperada = firmar(data);
-  if (firma.length !== esperada.length || !crypto.timingSafeEqual(Buffer.from(firma), Buffer.from(esperada))) return null;
+  const a = Buffer.from(firma), b = Buffer.from(esperada);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
   try {
     const s = JSON.parse(Buffer.from(data, "base64url").toString());
     if (Date.now() > s.exp) return null;

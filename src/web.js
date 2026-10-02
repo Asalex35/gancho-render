@@ -137,6 +137,7 @@ export function crearApp() {
   app.patch("/api/actores/:id", envolver(async (req, res) => {
     const a = await one("SELECT * FROM actores WHERE id = $1", [uuid(req.params.id)]);
     if (!a) throw publico("Ese actor no existe.", 404);
+    if (Array.isArray(req.body.quitarFotos) && req.body.quitarFotos.length) puedeBorrar(req, a.creado_por);
     const nombre = limpiar(req.body.nombre, 80) || a.nombre;
     let fotos = a.fotos;
     if (Array.isArray(req.body.quitarFotos)) {
@@ -157,6 +158,7 @@ export function crearApp() {
   // ---------- Episodios ----------
   async function armarCast(castIn) {
     if (!Array.isArray(castIn)) return [];
+    castIn = castIn.filter((c) => c && typeof c === "object");
     const ids = castIn.map((c) => c.actorId).filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id || ""));
     const actores = ids.length ? await all("SELECT id, nombre, fotos FROM actores WHERE id = ANY($1)", [ids]) : [];
     return castIn.slice(0, 8).map((c) => {
@@ -215,8 +217,10 @@ export function crearApp() {
   }));
 
   async function generar(ep, usuario, prioridad) {
+    // Un video automático sin brief (su lectura falló) no se puede generar: hay que reintentar el video.
     const r = await q(`UPDATE episodios SET estado = 'en_cola', error = NULL, aprobacion = NULL, actualizado = now()
-                       WHERE id = $1 AND estado NOT IN ('en_cola', 'pensando', 'procesando') AND NOT eligiendo RETURNING id`, [ep]);
+                       WHERE id = $1 AND estado NOT IN ('en_cola', 'pensando', 'procesando') AND NOT eligiendo
+                         AND (origen <> 'auto' OR video->>'etapa' = 'listo') RETURNING id`, [ep]);
     if (!r.rowCount) return false;
     await enviar("propuestas", { episodioId: ep, usuario, prioridad }, { prioridad });
     return true;
@@ -224,7 +228,9 @@ export function crearApp() {
   app.post("/api/episodios/:id/generar", envolver(async (req, res) => {
     const id = uuid(req.params.id);
     await reservarCupo(req.usuario, 3);
-    if (!(await generar(id, req.usuario, PRIORIDAD.interactiva))) { await devolverCupo(req.usuario, 3); throw publico("Espera: este episodio se está procesando.", 409); }
+    let ok = false;
+    try { ok = await generar(id, req.usuario, PRIORIDAD.interactiva); } catch (e) { await devolverCupo(req.usuario, 3); throw e; }
+    if (!ok) { await devolverCupo(req.usuario, 3); throw publico("No se puede generar ahora: se está procesando, o es un video que hay que reintentar.", 409); }
     res.status(202).json({ ok: true });
   }));
 
@@ -276,13 +282,14 @@ export function crearApp() {
       await c.query("INSERT INTO versiones (propuesta_id, data, imagen, evaluacion) VALUES ($1,$2,$3,$4)", [p.id, p.data, p.imagen, p.evaluacion]);
       await c.query("UPDATE propuestas SET data = $2, imagen = $3, evaluacion = $4, evaluando = false, version = version + 1, editado = false WHERE id = $1",
         [p.id, v.data, img, reencolar ? null : v.evaluacion]);
-      await c.query("UPDATE episodios SET elegida = NULL, paquete = NULL WHERE id = $1 AND elegida = $2", [p.episodio_id, p.id]);
+      await c.query("UPDATE episodios SET elegida = NULL, paquete = NULL, aprobacion = NULL WHERE id = $1 AND elegida = $2", [p.episodio_id, p.id]);
       await c.query("UPDATE episodios SET actualizado = now() WHERE id = $1", [p.episodio_id]);
     });
     if (reencolar) await enviar("imagen", { propuestaId: p.id, usuario: req.usuario, prioridad: PRIORIDAD.interactiva });
     res.json({ ok: true });
   }));
   app.patch("/api/propuestas/:id", envolver(async (req, res) => {
+    if (typeof req.body.titulo !== "string") throw publico("Título inválido.");
     const titulo = limpiar(req.body.titulo, 100);
     if (!titulo) throw publico("El título no puede quedar vacío.");
     const p = await propuestaConEpisodio(req.params.id);
@@ -332,8 +339,8 @@ export function crearApp() {
     if (!validas.length) throw publico("No hay filas válidas.");
     if (validas.length > config.limits.maxEpisodesPerBatch) throw publico(`Máximo ${config.limits.maxEpisodesPerBatch} episodios por lote.`);
     await reservarCupo(req.usuario, validas.length * 3);
-
-    const lote = await tx(async (c) => {
+    let lote;
+    try { lote = await tx(async (c) => {
       const { rows: [l] } = await c.query("INSERT INTO lotes (nombre, canal, modelo, auto_elegir, creado_por) VALUES ($1,$2,$3,$4,$5) RETURNING *",
         [limpiar(req.body.nombre, 120) || `Lote ${new Date().toLocaleDateString("es-MX")}`, canal, modelo, Boolean(req.body.autoElegir), req.usuario]);
       l.episodios = [];
@@ -345,7 +352,7 @@ export function crearApp() {
         l.episodios.push(e.id);
       }
       return l;
-    });
+    }); } catch (e) { await devolverCupo(req.usuario, validas.length * 3); throw e; }
     for (const id of lote.episodios) await enviar("propuestas", { episodioId: id, usuario: req.usuario, prioridad: PRIORIDAD.lote }, { prioridad: PRIORIDAD.lote });
     res.json({ id: lote.id, episodios: lote.episodios.length });
   }));
@@ -391,11 +398,16 @@ export function crearApp() {
     const eps = await all("SELECT id FROM episodios WHERE lote_id = $1 AND estado = 'error'", [id]);
     const imgs = await all(`SELECT p.id FROM propuestas p JOIN episodios e ON e.id = p.episodio_id WHERE e.lote_id = $1 AND NOT p.archivada AND p.imagen->>'estado' = 'error'`, [id]);
     await reservarCupo(req.usuario, eps.length * 3 + imgs.length);
-    for (const e of eps) await generar(e.id, req.usuario, PRIORIDAD.lote);
-    for (const p of imgs) {
-      await q(`UPDATE propuestas SET imagen = imagen || '{"estado":"en_cola","error":null,"taskId":null,"evitar":[]}'::jsonb WHERE id = $1 AND imagen->>'estado' = 'error'`, [p.id]);
-      await enviar("imagen", { propuestaId: p.id, usuario: req.usuario, prioridad: PRIORIDAD.lote }, { prioridad: PRIORIDAD.lote });
-    }
+    let usados = 0;
+    try {
+      for (const e of eps) if (await generar(e.id, req.usuario, PRIORIDAD.lote)) usados += 3;
+      for (const p of imgs) {
+        const r = await q(`UPDATE propuestas SET imagen = imagen || '{"estado":"en_cola","error":null,"taskId":null,"evitar":[],"reparaciones":0}'::jsonb WHERE id = $1 AND imagen->>'estado' = 'error'`, [p.id]);
+        if (!r.rowCount) continue;
+        await enviar("imagen", { propuestaId: p.id, usuario: req.usuario, prioridad: PRIORIDAD.lote }, { prioridad: PRIORIDAD.lote });
+        usados += 1;
+      }
+    } finally { await devolverCupo(req.usuario, eps.length * 3 + imgs.length - usados); }
     res.json({ episodios: eps.length, imagenes: imgs.length });
   }));
   app.delete("/api/lotes/:id", envolver(async (req, res) => {
@@ -490,10 +502,12 @@ export function crearApp() {
     if (await one("SELECT 1 FROM episodios WHERE video->>'key' = $1", [key])) throw publico("Ese video ya se registró.", 409);
     await reservarCupo(req.usuario, 3);
     const nombre = limpiar(req.body.nombreArchivo, 160);
-    const ep = await one(`INSERT INTO episodios (titulo, canal, modelo, brief, estado, origen, video, creado_por)
+    let ep;
+    try { ep = await one(`INSERT INTO episodios (titulo, canal, modelo, brief, estado, origen, video, creado_por)
         VALUES ($1,$2,$3,$4,'procesando','auto',$5,$6) RETURNING id`,
       [`Video: ${nombre.replace(/\.[^.]+$/, "")}`.slice(0, 120), canal.id, canal.modelo, { sinopsis: "", notas: limpiar(req.body.notas, 600) },
         { key, nombre, etapa: "en_cola", subtitulos: limpiar(req.body.subtitulos, 400000) || null }, req.usuario]);
+    } catch (e) { await devolverCupo(req.usuario, 3); throw e; }
     await enviar("ingesta", { episodioId: ep.id, usuario: req.usuario }, { prioridad: PRIORIDAD.lote });
     res.json(ep);
   }));
@@ -513,6 +527,7 @@ export function crearApp() {
     const id = String(req.params.id).toUpperCase().replace(/[^A-Z0-9_]/g, "").slice(0, 30);
     if (!id) throw publico("El código del canal solo puede tener letras, números y _.");
     const b = req.body;
+    if (b.nuevo && (await repo.canal(id))) throw publico(`Ya existe un canal con el código ${id}. Usa otro.`, 409);
     const nombre = limpiar(b.nombre, 80);
     if (!nombre) throw publico("Escribe el nombre del canal.");
     const lista = (v, max, n) => (Array.isArray(v) ? v : String(v || "").split(/\r?\n|,/)).map((x) => limpiar(x, max)).filter(Boolean).slice(0, n);

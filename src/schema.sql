@@ -130,3 +130,5 @@ CREATE INDEX IF NOT EXISTS episodios_origen_idx ON episodios (origen, actualizad
 ALTER TABLE lotes ADD COLUMN IF NOT EXISTS notificado boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS propuestas_ep_all_idx ON propuestas (episodio_id);
 CREATE INDEX IF NOT EXISTS episodios_estado_idx ON episodios (estado, actualizado) WHERE estado IN ('en_cola','pensando','procesando');
+-- Un mismo video subido no se puede registrar dos veces.
+CREATE UNIQUE INDEX IF NOT EXISTS episodios_video_key_uq ON episodios ((video->>'key')) WHERE video->>'key' IS NOT NULL;

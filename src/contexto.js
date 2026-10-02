@@ -15,10 +15,11 @@ export function senal(ms) {
 export function semaforo(max) {
   let activos = 0;
   const cola = [];
-  const soltar = () => { activos--; cola.shift()?.(); };
+  // Al terminar, el turno pasa directo al siguiente en espera (sin liberar el lugar), así nunca se pasa del límite.
+  const soltar = () => { const sig = cola.shift(); if (sig) sig(); else activos--; };
   return async (fn) => {
     if (activos >= max) await new Promise((r) => cola.push(r));
-    activos++;
+    else activos++;
     try { return await fn(); } finally { soltar(); }
   };
 }

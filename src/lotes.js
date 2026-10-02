@@ -24,7 +24,9 @@ export const PLANTILLA = [
 ];
 
 export async function interpretar(texto, canales) {
-  const parsed = Papa.parse(String(texto || "").trim(), { header: true, skipEmptyLines: "greedy", transformHeader: (h) => MAPA[normal(h)] || `_${normal(h)}` });
+  // Quita caracteres de control (un \u0000 rompe Postgres) antes de interpretar.
+  const limpio = String(texto || "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "").trim();
+  const parsed = Papa.parse(limpio, { header: true, skipEmptyLines: "greedy", transformHeader: (h) => MAPA[normal(h)] || `_${normal(h)}` });
   const desconocidas = (parsed.meta.fields || []).filter((f) => f.startsWith("_")).map((f) => f.slice(1));
   if (!parsed.meta.fields?.includes("sinopsis")) {
     return { error: "No encontré la columna \"sinopsis\". La primera fila debe tener los nombres de las columnas (usa la plantilla).", filas: [] };

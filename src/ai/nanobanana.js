@@ -70,10 +70,16 @@ async function imagenDePrueba(texto) {
   return sharp(Buffer.from(svg)).jpeg({ quality: 80 }).toBuffer();
 }
 
+// Para mostrar en pantalla: nunca bloquea más de 5 s y recuerda también las fallas por 30 s.
 let cacheCreditos = { v: null, t: 0 };
 export async function creditos() {
   if (Date.now() - cacheCreditos.t < 30e3) return cacheCreditos.v;
-  const v = await pedir("/common/credit");
+  let v = null;
+  try {
+    const res = await fetch(`${BASE}/common/credit`, { headers: { Authorization: `Bearer ${config.nanoBananaKey}` }, signal: AbortSignal.timeout(5000) });
+    const body = await res.json();
+    if (body.code === 200) v = body.data;
+  } catch {}
   cacheCreditos = { v, t: Date.now() };
   return v;
 }

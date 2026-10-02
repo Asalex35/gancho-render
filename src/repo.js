@@ -57,3 +57,9 @@ export function publicarEpisodio(ep) {
     })),
   };
 }
+
+// Devuelve portadas reservadas que nunca se pidieron (un trabajo falló antes de generar).
+export async function devolverCupo(usuario, n) {
+  if (!usuario || n <= 0 || process.env.NANOBANANA_MOCK === "1") return;
+  await q("UPDATE uso SET imagenes = greatest(0, imagenes - $2) WHERE dia = current_date AND usuario = $1", [usuario, n]).catch(() => {});
+}

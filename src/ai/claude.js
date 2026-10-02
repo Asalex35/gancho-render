@@ -6,7 +6,7 @@ import { config } from "../config.js";
 import { als, semaforo } from "../contexto.js";
 
 // Pocos reintentos aquí: la cola ya reintenta con espera. Tiempo máximo por llamada: 5 min.
-const client = new Anthropic({ apiKey: config.anthropicKey, maxRetries: 2, timeout: 300e3 });
+const client = new Anthropic({ apiKey: config.anthropicKey, maxRetries: 1, timeout: 240e3 });
 // Límite real de llamadas simultáneas a Claude en este proceso (todas las colas juntas).
 const turno = semaforo(Number(process.env.CLAUDE_CONCURRENCY || 4));
 
