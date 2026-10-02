@@ -160,7 +160,8 @@ function repartir(lista, n) {
 // Extrae cuadros de una ventana (1 por segundo, o al menos 2).
 export async function cuadrosDeVentana(entrada, v, dir, prefijo) {
   const fps = v.dur < 3 ? 2 : 1;
-  await ffmpeg(["-ss", v.desde.toFixed(2), "-t", v.dur.toFixed(2), "-i", entrada, "-vf", `fps=${fps},scale=1280:-2`, "-q:v", "3", "-y", path.join(dir, `${prefijo}_%03d.jpg`)], { timeoutMs: 120e3 });
+  // Resolución alta (hasta 2560 px de ancho, sin agrandar): con video 4K los recortes de cara salen muy nítidos.
+  await ffmpeg(["-ss", v.desde.toFixed(2), "-t", v.dur.toFixed(2), "-i", entrada, "-vf", `fps=${fps},scale='min(2560,iw)':-2`, "-q:v", "2", "-y", path.join(dir, `${prefijo}_%03d.jpg`)], { timeoutMs: 180e3 });
   const archivos = (await fs.readdir(dir)).filter((f) => f.startsWith(`${prefijo}_`)).sort();
   return archivos.map((f, i) => ({ archivo: path.join(dir, f), t: v.desde + i / fps, hablante: v.hablante }));
 }
@@ -183,4 +184,23 @@ export async function hojaDeCaras(candidatos) {
     hojas.push({ desde: grupo[0].n, hasta: grupo.at(-1).n, base64: buf.toString("base64") });
   }
   return hojas;
+}
+
+// Hoja de personas: una fila por persona detectada (P1, P2…) con sus 3 mejores caras.
+export async function hojaDePersonas(personas) {
+  const T = 200, COLS = 3, ETQ = 260;
+  const filas = personas.length;
+  const capas = [];
+  for (const [i, g] of personas.entries()) {
+    const texto = [`P${g.n}`, g.actor ? `= ${g.actor.nombre}` : null, g.hablante ? `habla ${g.hablante}` : null].filter(Boolean).join("  ");
+    const esc = (t) => t.replace(/[<>&"]/g, "");
+    capas.push({ input: Buffer.from(`<svg width="${ETQ}" height="${T}"><rect width="${ETQ}" height="${T}" fill="#111"/>
+      <text x="14" y="${T / 2}" font-family="Arial" font-size="20" font-weight="bold" fill="#ffd84d">${esc(texto).slice(0, 40)}</text>
+      <text x="14" y="${T / 2 + 28}" font-family="Arial" font-size="15" fill="#ccc">${g.caras.length} apariciones</text></svg>`), left: 0, top: i * T });
+    for (const [k, c] of g.elegidas.slice(0, COLS).entries()) {
+      capas.push({ input: await sharp(c.rostro).resize(T, T).jpeg().toBuffer(), left: ETQ + k * T, top: i * T });
+    }
+  }
+  const buf = await sharp({ create: { width: ETQ + COLS * T, height: filas * T, channels: 3, background: "#000" } }).composite(capas).jpeg({ quality: 82 }).toBuffer();
+  return [{ desde: personas[0].n, hasta: personas.at(-1).n, base64: buf.toString("base64") }];
 }

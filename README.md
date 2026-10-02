@@ -25,6 +25,13 @@ Imágenes: disco local o Cloudflare R2 / S3
 Cada canal tiene idioma (español, inglés, portugués), voz, estilo visual, títulos de ejemplo, textos fijos y reglas de aprobación.
 Los títulos se escriben como nativo del país y la interfaz muestra la traducción al español.
 
+## Rostros parecidos a los actores
+- Cada actor tiene una **biblioteca de rostros**: sus fotos subidas + las mejores caras de cada episodio (máx. 40).
+- En el flujo automático, Gancho agrupa las caras del video por persona, **reconoce al actor** contra la biblioteca
+  y, con la historia, decide qué personaje es. Si no lo conoce, lo crea como "Sin nombre" para renombrarlo una vez.
+- Referencias para Nano Banana Pro: cara del episodio (frente y 3/4), medio cuerpo y las mejores caras de la biblioteca.
+- Cada portada se mide contra la cara real del actor (parecido alto / medio / bajo). Si sale bajo, se vuelve a pintar.
+
 ## Si algo falla
 - **Nano Banana caído o sin créditos:** Gancho pasa solo a Google (mismo modelo, directo) y luego a Seedream, y avisa al equipo.
   Tras 3 fallas en 5 min deja de intentar con ese proveedor por 5 min.

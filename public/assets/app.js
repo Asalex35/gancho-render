@@ -161,7 +161,7 @@ function tarjetaLote(l) {
 
 // ================= LOTE NUEVO =================
 async function vistaLoteNuevo() {
-  const st = local.get("gancho-lote") || { nombre: "", canal: me.canales[0]?.id, modelo: "nb2", autoElegir: true, texto: "" };
+  const st = local.get("gancho-lote") || { nombre: "", canal: me.canales[0]?.id, modelo: "pro", autoElegir: true, texto: "" };
   const guardar = () => local.set("gancho-lote", st);
   const texto = h("textarea", { id: "lote-texto", style: { minHeight: "220px", fontFamily: "ui-monospace, Menlo, monospace", fontSize: ".82rem" },
     placeholder: "Copia las filas desde Google Sheets o Excel (con la fila de encabezados) y pégalas aquí." });
@@ -318,7 +318,7 @@ async function vistaEditor(id) {
   if (!vigente(t0)) return;
   const borradorKey = "gancho-borrador";
   const base = existente ? { ...existente.brief, titulo: existente.titulo, canal: existente.canal, modelo: existente.modelo, cast: existente.cast }
-    : local.get(borradorKey) || { canal: me.canales[0]?.id, modelo: "nb2", cast: [{ personaje: "", rol: "transgresor" }, { personaje: "", rol: "testigo" }] };
+    : local.get(borradorKey) || { canal: me.canales[0]?.id, modelo: "pro", cast: [{ personaje: "", rol: "transgresor" }, { personaje: "", rol: "testigo" }] };
   const st = structuredClone(base);
   st.cast = (st.cast || []).map((c) => ({ ...c }));
   const guardarBorrador = () => { if (!existente) local.set(borradorKey, st); };
@@ -339,7 +339,7 @@ async function vistaEditor(id) {
         h("div", { class: "r1" },
           actor?.fotos?.length ? h("img", { class: "avatar", src: media(actor.fotos[0]), alt: actor.nombre })
             : c.fotos?.length ? h("img", { class: "avatar", src: media(c.fotos[0]), alt: c.personaje, title: "Cuadro del video" }) : h("div", { class: "avatar" }, "Sin foto"),
-          h("div", { class: "stack", style: { gap: "4px" } }, h("b", {}, actor ? actor.nombre : c.fotos?.length ? "Cara tomada del video" : "Elige quién lo interpreta"),
+          h("div", { class: "stack", style: { gap: "4px" } }, h("b", {}, actor ? `${actor.nombre}${c.reconocido ? " · reconocido por Gancho" : ""}` : c.fotos?.length ? "Cara tomada del video" : "Elige quién lo interpreta"),
             h("button", { class: "btn small", type: "button", onclick: () => elegirActor(c) }, actor ? "Cambiar actor" : "Elegir actor o subir fotos")),
           h("button", { class: "btn small ghost danger", type: "button", "aria-label": "Quitar personaje", onclick: () => { st.cast.splice(i, 1); guardarBorrador(); pintarCast(); } }, "Quitar")),
         h("div", { class: "r2" }, inp("personaje", "Personaje (ej. Elena)", "Nombre del personaje"), inp("edad", "Edad", "Edad")),
@@ -557,7 +557,10 @@ function tarjeta(p, x, i, recargar) {
   });
 
   const c = x.calificacion;
-  const caras = ev ? { si: ["Caras: coinciden", "ok"], parcial: ["Caras: se parecen poco", "warn"], no: ["Caras: no coinciden", "bad"] }[ev.caras_coinciden] || null : null;
+  const caras = ev && !ev.parecido?.length ? { si: ["Caras: coinciden", "ok"], parcial: ["Caras: se parecen poco", "warn"], no: ["Caras: no coinciden", "bad"] }[ev.caras_coinciden] || null : null;
+  // Parecido medido con el comparador de rostros contra el actor real.
+  const nivel = (sim) => (sim >= 0.55 ? ["Alto", "ok"] : sim >= 0.4 ? ["Medio", "warn"] : ["Bajo", "bad"]);
+  const parecido = (ev?.parecido || []).map((x) => { const [t, c] = nivel(x.sim); return h("span", { class: `tag ${c}`, title: `Similitud ${x.sim}` }, `${x.personaje}: parecido ${t}`); });
   const razones = ev?.porque_funciona?.length ? ev.porque_funciona : x.porque_funciona;
   const movil = h("div", { class: "movil", "aria-label": "Así se ve en el celular" },
     h("div", { class: "mini" }, img.estado === "lista" ? h("img", { src: media(img.mini || img.key), alt: "" }) : null),
@@ -567,7 +570,7 @@ function tarjeta(p, x, i, recargar) {
     lienzo,
     h("div", { class: "body" },
       h("div", { class: "row", style: { gap: "6px" } }, h("span", { class: "tag" }, `Opción ${i + 1}`), x.version > 1 ? h("span", { class: "tag" }, `v${x.version}`) : null,
-        caras ? h("span", { class: `tag ${caras[1]}` }, caras[0]) : null, x.editadoAMano ? h("span", { class: "tag" }, "Título editado") : null,
+        caras ? h("span", { class: `tag ${caras[1]}` }, caras[0]) : null, ...parecido, x.editadoAMano ? h("span", { class: "tag" }, "Título editado") : null,
         x.propia ? h("span", { class: "tag", title: "Subida por el equipo" }, "Hecha por el equipo") : null,
         img.proveedor && !["nanobanana", "manual"].includes(img.proveedor) ? h("span", { class: "tag warn", title: "Nano Banana falló y se usó el respaldo" }, `Hecha con ${{ google: "Google", fal: "Seedream" }[img.proveedor] || img.proveedor}`) : null),
       h("div", { class: "stack", style: { gap: "4px" } }, x.rehaciendo === "titulo" ? h("div", { class: "row muted" }, h("div", { class: "spin" }), "Rehaciendo el título…") : titulo,
@@ -680,6 +683,15 @@ function paqueteFinal(p) {
 }
 
 // ================= ACTORES =================
+function renombrar(a) {
+  const n = h("input", { type: "text", id: "renombrar", placeholder: "Nombre real del actor o actriz" });
+  abrirModal(h("h2", {}, "¿Quién es?"), h("p", { class: "muted", style: { margin: 0 } }, `Gancho lo encontró como "${a.nombre}".`), n,
+    h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cancelar"),
+      h("button", { class: "btn primary", type: "button", onclick: async () => {
+        if (!n.value.trim()) return toast("Escribe el nombre.", true);
+        try { await api(`/api/actores/${a.id}`, { method: "PATCH", body: { nombre: n.value.trim() } }); cerrarModal(); toast("Guardado"); vistaActores(); } catch (e) { toast(e.message, true); }
+      } }, "Guardar")));
+}
 async function vistaActores() {
   const t0 = navId;
   const actores = await api("/api/actores");
@@ -691,7 +703,11 @@ async function vistaActores() {
       try { await api(`/api/actores/${a.id}/fotos`, { method: "POST", form: fd }); toast("Fotos agregadas"); recargar(); } catch (e) { toast(e.message, true); }
     } });
     return h("div", { class: "actor-card" },
-      h("div", { class: "row", style: { justifyContent: "space-between" } }, h("b", {}, a.nombre), h("span", { class: `tag ${a.fotos.length >= 2 ? "ok" : "warn"}` }, `${a.fotos.length} foto${a.fotos.length === 1 ? "" : "s"}`)),
+      h("div", { class: "row", style: { justifyContent: "space-between" } }, h("b", {}, a.nombre),
+        a.auto ? h("span", { class: "tag warn", title: "Gancho lo encontró en un video. Ponle el nombre real." }, "Sin nombre") : null,
+        h("span", { class: `tag ${a.n_caras >= 3 ? "ok" : "warn"}`, title: "Caras guardadas en su biblioteca (de fotos y episodios)" }, `${a.n_caras} caras`)),
+      a.mejor_cara && !a.fotos.length ? h("img", { src: media(a.mejor_cara), alt: "", style: { width: "96px", borderRadius: "10px" } }) : null,
+      a.auto ? h("button", { class: "btn small", type: "button", onclick: () => renombrar(a) }, "Ponerle nombre") : null,
       h("div", { class: "fotos" }, a.fotos.map((k) => h("div", {}, h("img", { src: media(k), alt: "", onclick: () => verGrande(media(k)) }),
         h("button", { type: "button", "aria-label": "Quitar foto", onclick: async () => { try { await api(`/api/actores/${a.id}`, { method: "PATCH", body: { quitarFotos: [k] } }); recargar(); } catch (e) { toast(e.message, true); } } }, "×")))),
       h("div", { class: "row" }, h("button", { class: "btn small", type: "button", onclick: () => input.click() }, "+ Fotos"), input,
@@ -702,7 +718,7 @@ async function vistaActores() {
     h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Biblioteca"), h("h1", {}, "Actores")),
       h("button", { class: "btn primary big", type: "button", onclick: () => abrirModal(formNuevoActor(() => { cerrarModal(); recargar(); }),
         h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cerrar"))) }, "+ Actor")),
-    h("p", { class: "muted", style: { marginTop: 0 } }, "Para que las caras salgan parecidas: 2 a 5 fotos por actor, con buena luz, de frente y de 3/4. En el lote escribe el nombre igual que aquí."),
+    h("p", { class: "muted", style: { marginTop: 0 } }, "Cada actor junta sus mejores caras de sus fotos y de cada episodio; así Gancho lo reconoce solo y sus portadas se parecen más. Si Gancho encuentra a alguien nuevo, aparece como \"Sin nombre\": ponle su nombre real una vez y listo."),
     actores.length ? h("div", { class: "actores" }, actores.map(card)) : h("div", { class: "vacio" }, h("p", { class: "muted", style: { margin: 0 } }, "Todavía no hay actores.")));
 }
 

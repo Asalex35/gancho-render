@@ -19,6 +19,7 @@ import { tipoImagen, miniatura, paraClaude } from "./imagenes.js";
 import * as video from "./video.js";
 import { transcribir, transcripcionDisponible, guionConHablantes } from "./transcribir.js";
 import * as caras from "./caras.js";
+import * as biblioteca from "./biblioteca.js";
 import { notificar } from "./notificar.js";
 import { als, senal } from "./contexto.js";
 
@@ -133,15 +134,22 @@ async function hPropuestas({ episodioId, usuario, prioridad }) {
 // más un cuadro del lugar del momento cumbre si existe.
 async function referencias(ep, data, { conEscena = true } = {}) {
   const nombres = (data.personajes_en_portada || []).map(normal);
+  const enPortada = (ep.cast || []).filter((c) => nombres.includes(normal(c.personaje)));
+  const escena = conEscena ? (ep.brief.cuadros_momento || []).slice(0, 1) : [];
+  // Reparte el cupo de referencias del modelo (Pro: 8, NB2: 14) entre los personajes de la portada.
+  const cupo = (nb.MODELOS[ep.modelo]?.maxRefs || 8) - escena.length;
+  const porPersonaje = Math.max(1, Math.min(4, Math.floor(cupo / Math.max(1, enPortada.length))));
   const refs = [];
-  for (const c of ep.cast || []) {
-    if (!nombres.includes(normal(c.personaje))) continue;
-    let fotos = (c.fotos || []).slice(0, 3);
-    if (!fotos.length && c.actorId) fotos = ((await one("SELECT fotos FROM actores WHERE id = $1", [c.actorId]))?.fotos || []).slice(0, 2);
+  for (const c of enPortada) {
+    const delEpisodio = c.fotos || [];
+    let deBiblioteca = c.actorId ? await biblioteca.referencias(c.actorId, 3) : [];
+    if (!deBiblioteca.length && !delEpisodio.length && c.actorId) deBiblioteca = ((await one("SELECT fotos FROM actores WHERE id = $1", [c.actorId]))?.fotos || []).slice(0, 2);
+    // Intercala: cara del episodio, cara de la biblioteca, medio cuerpo, otro ángulo…
+    const orden = [delEpisodio[0], deBiblioteca[0], delEpisodio[1], deBiblioteca[1], delEpisodio[2], deBiblioteca[2]];
+    const fotos = [...new Set(orden.filter(Boolean))].slice(0, porPersonaje);
     if (fotos.length) refs.push({ personaje: c.personaje, fotos });
   }
-  const escena = (ep.brief.cuadros_momento || []).slice(0, 1);
-  if (conEscena && escena.length) refs.push({ escena: true, fotos: escena });
+  if (escena.length) refs.push({ escena: true, fotos: escena });
   return refs;
 }
 
@@ -152,9 +160,13 @@ function promptConReferencias(prompt, refs, extra) {
     const s = idx.length > 1 ? "s" : "";
     return r.escena
       ? `Reference image${s} ${idx.join(", ")}: a frame of the real episode. Match its location, lighting and production design (not its composition).`
-      : `Reference image${s} ${idx.join(", ")}: the real actor who plays ${r.personaje}. Keep this exact face, skin tone, hair and age.`;
+      : `Reference image${s} ${idx.join(", ")}: the real actor who plays ${r.personaje} (face close-ups and a half-body shot for wardrobe).`;
   });
-  const cabeza = refs.length ? `${mapa.join("\n")}\nUse the actor references ONLY for faces and identities. Build a new, more dramatic composition.\n\n` : "";
+  const cabeza = refs.length ? `${mapa.join("\n")}
+LIKENESS IS THE TOP PRIORITY: each character must be instantly recognizable as the real actor in the references.
+Copy the exact facial structure: eye shape and spacing, eyebrows, nose, lips, jawline, hairline, skin tone, wrinkles and age.
+Do not beautify, slim, de-age or change ethnicity. Photorealistic skin, no plastic or airbrushed look.
+Use the references ONLY for identity and wardrobe; build a new, more dramatic composition.\n\n` : "";
   return `${cabeza}${prompt}${extra ? `\n\nFIX THESE PROBLEMS FROM THE PREVIOUS ATTEMPT: ${extra}` : ""}`;
 }
 
@@ -299,6 +311,26 @@ async function hEvaluar({ propuestaId, key, prioridad, sinReintento }) {
     const b64 = async (k) => ({ base64: (await paraClaude(await storage.leer(k))).toString("base64"), mime: "image/jpeg" });
     const refs = await Promise.all((await referencias(ep, p.data, { conEscena: false })).map(async (r) => ({ personaje: r.personaje, ...(await b64(r.fotos[0])) })));
     ev = await ia.evaluarPortada({ imagen: await b64(key), propuesta: p.data, referencias: refs });
+    // Parecido objetivo: compara las caras de la portada con la huella de cada actor (episodio o biblioteca).
+    const nombres = (p.data.personajes_en_portada || []).map(normal);
+    const objetivos = [];
+    for (const c of ep.cast || []) {
+      if (!nombres.includes(normal(c.personaje))) continue;
+      const h = c.huella || (c.actorId ? await biblioteca.huellaDe(c.actorId) : null);
+      if (h) objetivos.push({ personaje: c.personaje, huella: h });
+    }
+    if (objetivos.length) {
+      const enPortada = await caras.analizarCuadro(await storage.leer(key), { minArea: 0.003 }).catch(() => []);
+      ev.parecido = objetivos.map((o) => ({
+        personaje: o.personaje,
+        sim: Math.round(Math.max(0, ...enPortada.map((c) => caras.similitud(o.huella, c.huella))) * 100) / 100,
+      }));
+      const bajos = ev.parecido.filter((x) => x.sim < 0.35);
+      if (bajos.length) {
+        ev.aprobada = false;
+        ev.problemas = [...bajos.map((x) => `La cara de ${x.personaje} no se parece al actor real`), ...(ev.problemas || [])].slice(0, 3);
+      }
+    }
   } finally {
     if (!ev) await q("UPDATE propuestas SET evaluando = false WHERE id = $1", [propuestaId]);
   }
@@ -313,10 +345,11 @@ async function hEvaluar({ propuestaId, key, prioridad, sinReintento }) {
   await repo.tocarEpisodio(p.episodio_id);
   if (!fila) return;
   if (reintentar) {
+    const extra = [...ev.problemas, ...(ev.parecido?.some((x) => x.sim < 0.35) ? ["MATCH THE REFERENCE FACES EXACTLY: same facial structure, same age, same skin tone"] : [])].join("; ");
     // La versión con defectos se guarda (se puede restaurar) en vez de perderse.
     await q("INSERT INTO versiones (propuesta_id, data, imagen, evaluacion, feedback) VALUES ($1,$2,$3,$4,$5)",
       [propuestaId, p.data, p.imagen, ev, { objetivo: "portada", razones: ["Revisión automática"], comentario: ev.problemas.join("; ") }]);
-    return enviar("imagen", { propuestaId, usuario: p.imagen.usuario, extra: ev.problemas.join("; "), prioridad, cobrar: true }, { prioridad });
+    return enviar("imagen", { propuestaId, usuario: p.imagen.usuario, extra, prioridad, cobrar: true }, { prioridad });
   }
   await quizaAutoElegir(p.episodio_id);
 }
@@ -444,61 +477,61 @@ async function hIngesta({ episodioId, usuario }) {
       } catch (e) { console.warn("Transcripción omitida:", e.message); texto = ""; fuente = "ninguna"; }
     }
 
-    // Detector de caras en ≈5 min del video.
+    // Detector de caras en ≈5 min del video → caras agrupadas por persona → reconocidas contra la biblioteca de actores.
     await etapa("caras", { fuente, minutosTranscritos: Math.round(video.planTranscripcion(segundos).reduce((s, t) => s + t.dur, 0) / 60) });
-    const candidatos = [];
+    let personas = [];
     try {
-      const ventanas = video.planCaras(segundos, frases);
-      const evaluados = [];
-      for (const [i, v] of ventanas.entries()) {
+      const todas = [];
+      for (const [i, v] of video.planCaras(segundos, frases).entries()) {
         for (const c of await video.cuadrosDeVentana(entrada, v, dir, `v${i}`)) {
-          const ev = await caras.evaluarCuadro(c.archivo).catch(() => null);
-          if (ev) evaluados.push({ ...c, ...ev });
+          for (const u of await caras.analizarCuadro(c.archivo).catch(() => [])) todas.push({ ...u, t: c.t, archivo: c.archivo, hablante: c.hablante });
         }
       }
-      // Los mejores por hablante (o en general), separados al menos 8 s para no repetir la misma toma.
-      const grupos = {};
-      for (const e of evaluados) (grupos[e.hablante || "-"] ??= []).push(e);
-      const porGrupo = Object.keys(grupos).length > 1 ? 5 : 20;
-      for (const lista of Object.values(grupos)) {
-        const elegidos = [];
-        for (const e of lista.sort((a, b) => b.calidad - a.calidad)) {
-          if (elegidos.length >= porGrupo) break;
-          if (elegidos.some((x) => Math.abs(x.t - e.t) < 8)) continue;
-          elegidos.push(e);
-        }
-        candidatos.push(...elegidos);
+      personas = caras.agrupar(todas).filter((g) => g.caras.length >= 2 || g.caras[0].calidad > 6).slice(0, 6);
+      for (const [i, g] of personas.entries()) {
+        g.n = i + 1;
+        g.elegidas = caras.mejores(g, 3);
+        for (const c of g.elegidas) Object.assign(c, await caras.recortes(c.archivo, c.cara));
+        const votos = {};
+        for (const c of g.caras) if (c.hablante && c.sola) votos[c.hablante] = (votos[c.hablante] || 0) + 1;
+        const [h, nv] = Object.entries(votos).sort((a, b) => b[1] - a[1])[0] || [];
+        g.hablante = nv >= 2 ? h : null;
+        g.actor = await biblioteca.identificar(g.centro);
       }
-      for (const [i, c] of candidatos.sort((a, b) => a.t - b.t).entries()) {
-        c.n = i + 1;
-        Object.assign(c, await caras.recortes(c.archivo, c.cara));
-      }
-    } catch (e) { console.warn("Detector de caras omitido:", e.message); candidatos.length = 0; }
+    } catch (e) { console.warn("Detector de caras omitido:", e.message); personas = []; }
 
     await etapa("analizando");
     const r = await ia.analizarVideo({
       canal, transcripcion: texto, parcial, duracionMin, conHablantes: frases.some((f) => f.hablante),
-      hojas: await video.hojasDeContacto(generales), hojasCaras: candidatos.length ? await video.hojaDeCaras(candidatos) : [],
+      hojas: await video.hojasDeContacto(generales), hojasCaras: personas.length ? await video.hojaDePersonas(personas) : [],
+      personas: personas.map((g) => ({ n: g.n, apariciones: g.caras.length, hablante: g.hablante, actor: g.actor?.nombre })),
       nombreArchivo: ep.video.nombre, notas: ep.brief.notas,
     });
     await repo.sumarUso(usuario, "textos");
 
-    // Guarda solo los recortes que Claude asignó a un personaje.
-    const porNumero = Object.fromEntries(candidatos.map((c) => [c.n, c]));
+    // Cada personaje: sus mejores caras del episodio (frente, 3/4, medio cuerpo) y su actor.
+    // Si el comparador no conoce al actor, Gancho lo crea con el nombre del personaje para que el equipo lo renombre.
+    const porNumero = Object.fromEntries(personas.map((g) => [g.n, g]));
     const cast = [];
+    const usadas = new Set();
     for (const p of r.personajes.slice(0, 4)) {
-      const mias = p.caras.map((n) => porNumero[n]).filter(Boolean);
-      let fotos = [];
-      if (mias.length) {
-        const mejor = mias[0];
-        fotos = [await guardar(mejor.rostro), await guardar(mejor.medio)];
-        const intensa = porNumero[p.cara_intensa];
-        if (intensa && intensa !== mejor) fotos.push(await guardar(intensa.rostro));
+      const g = porNumero[p.persona];
+      let fotos = [], actor = null, huella = null;
+      if (g && !usadas.has(g.n)) {
+        usadas.add(g.n);
+        const [a, b] = g.elegidas;
+        fotos = [await guardar(a.rostro), await guardar(a.medio)];
+        if (b) fotos.push(await guardar(b.rostro));
+        huella = g.centro.map((x) => Math.round(x * 1e4) / 1e4);
+        actor = g.actor || (["transgresor", "victima", "villano"].includes(p.rol) ? await biblioteca.crearActorAuto(`${p.personaje} (sin nombre)`, usuario) : null);
+        if (actor) await biblioteca.agregarDeEpisodio(actor.actorId || actor.id, g.elegidas, episodioId);
       } else {
         fotos = p.cuadros.map((n) => keys[n]).filter(Boolean).slice(0, 2);
       }
       cast.push({ personaje: p.personaje, edad: p.edad, rol: p.rol, vestuario: p.vestuario, descripcion: p.descripcion_visual,
-        hablante: p.hablante || null, fotos, actorId: null, actorNombre: null, tieneFotos: fotos.length > 0 });
+        hablante: p.hablante || g?.hablante || null, fotos, huella,
+        actorId: actor ? (actor.actorId || actor.id) : null, actorNombre: actor?.nombre || null,
+        reconocido: Boolean(g?.actor), tieneFotos: fotos.length > 0 });
     }
     const brief = { ...ep.brief, sinopsis: r.sinopsis, giro: r.giro, momento: r.momento, desenlace: r.desenlace, escenario: r.escenario,
       duracion_min: duracionMin, cuadros_momento: r.cuadros_momento.map((n) => keys[n]).filter(Boolean).slice(0, 2) };
@@ -506,7 +539,7 @@ async function hIngesta({ episodioId, usuario }) {
     const { rowCount } = await q(`UPDATE episodios SET titulo = CASE WHEN titulo = '' OR titulo LIKE 'Video:%' THEN $2 ELSE titulo END, brief = $3, "cast" = $4,
         video = video || $5::jsonb, estado = 'en_cola', actualizado = now() WHERE id = $1 AND estado = 'procesando'`,
       [episodioId, r.titulo_interno, brief, JSON.stringify(cast), {
-        etapa: "listo", calidad: r.calidad, cuadros: [...nuevos], carasRevisadas: candidatos.length, transcripcion: texto.slice(0, 200000),
+        etapa: "listo", calidad: r.calidad, cuadros: [...nuevos], personasDetectadas: personas.length, transcripcion: texto.slice(0, 200000),
       }]);
     if (!rowCount) throw publico("El episodio cambió mientras se procesaba.");
     nuevos.length = 0; // ya pertenecen al episodio
@@ -610,6 +643,7 @@ export async function iniciarWorkers() {
     if (viejos.length) console.log(`Limpieza: ${viejos.length} videos originales borrados`);
   }, async () => {}, 1);
   await trabajo("vigilante", hVigilante, async () => {}, 1);
+  biblioteca.ponerAlDia().catch((e) => console.warn("Biblioteca:", e.message));
   await boss.schedule("limpieza", "0 9 * * *"); // 3 a. m. hora de México
   await boss.schedule("vigilante", "*/5 * * * *");
   console.log(`Workers listos · Claude x${c.claude} · imágenes x${c.images} · proveedores: ${imagen.orden().join(" → ") || "ninguno"}`);

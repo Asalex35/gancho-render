@@ -26,7 +26,7 @@ export async function init() {
     catch (e) { throw new Error(`No pude entrar al bucket "${S.bucket}": revisa S3_ENDPOINT y las llaves (${e.name}).`); }
     return;
   }
-  for (const d of ["actores", "portadas", "mini", "logos", "videos", "cuadros"]) await fs.mkdir(path.resolve(S.localDir, d), { recursive: true });
+  for (const d of ["actores", "portadas", "mini", "logos", "videos", "cuadros", "rostros"]) await fs.mkdir(path.resolve(S.localDir, d), { recursive: true });
 }
 
 export async function guardar(carpeta, buffer, ext) {

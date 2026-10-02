@@ -57,9 +57,8 @@ const AnalisisVideo = z.object({
     vestuario: z.string(),
     descripcion_visual: z.string().describe("Cómo se ve: cabello, complexión, ropa (sin nombres de personas reales)"),
     hablante: z.string().describe("Letra del hablante en la transcripción (A, B…) o cadena vacía si no se sabe"),
-    caras: z.array(z.number().int()).describe("Números C de los recortes de cara que son de este personaje, el mejor primero (máx. 3). Vacío si ninguno"),
-    cara_intensa: z.number().int().describe("Número C del recorte con la emoción más fuerte de este personaje (llanto, ira, miedo); 0 si ninguno"),
-    cuadros: z.array(z.number().int()).describe("Solo si no hay recortes C: números de cuadro general donde se le ve la cara claramente (máx. 3)"),
+    persona: z.number().int().describe("Número P de la fila de caras que es este personaje; 0 si ninguna"),
+    cuadros: z.array(z.number().int()).describe("Solo si no hay filas P para este personaje: números de cuadro general donde se le ve la cara (máx. 3)"),
   })),
   cuadros_momento: z.array(z.number().int()).describe("Cuadros que muestran el lugar y ambiente del momento cumbre (máx. 2)"),
   calidad: z.enum(["completa", "parcial"]).describe("parcial si faltó información (sin diálogo, video incompleto)"),
@@ -245,14 +244,14 @@ TAREA: Escribe el paquete de publicación TODO en ${nombreIdioma(canal.idioma)},
 
 
 // ---------- Flujo automático: entender el episodio desde el video ----------
-export async function analizarVideo({ canal, transcripcion, hojas, hojasCaras = [], conHablantes, parcial, duracionMin, nombreArchivo, notas }) {
+export async function analizarVideo({ canal, transcripcion, hojas, hojasCaras = [], personas = [], conHablantes, parcial, duracionMin, nombreArchivo, notas }) {
   const content = [
     ...hojas.flatMap((hj) => [
       { type: "text", text: `Hoja de cuadros generales ${hj.desde}-${hj.hasta} (número arriba a la izquierda):` },
       { type: "image", source: { type: "base64", media_type: "image/jpeg", data: hj.base64 } },
     ]),
     ...hojasCaras.flatMap((hj) => [
-      { type: "text", text: `Recortes de caras C${hj.desde}-C${hj.hasta}${conHablantes ? " (la letra es quién estaba hablando en ese momento; puede ser un plano de reacción de otra persona)" : ""}:` },
+      { type: "text", text: "Personas del episodio: cada fila (P1, P2…) son caras de UNA misma persona, agrupadas por un comparador de rostros." },
       { type: "image", source: { type: "base64", media_type: "image/jpeg", data: hj.base64 } },
     ]),
     {
@@ -270,10 +269,11 @@ TAREA: Eres el editor que vio el episodio completo. Escribe el brief para hacer 
 sinopsis, giro principal, momento más fuerte para la portada, desenlace y escenario (todo en español).
 Lista los personajes importantes (máx. 4).${conHablantes ? `
 Usa la transcripción para saber qué letra de hablante es cada personaje (por cómo los llaman y lo que dicen).` : ""}
-Para cada personaje elige en los recortes C las caras que son suyas (la mejor primero: nítida, de frente o 3/4, sin tapar)
-y la de emoción más fuerte. Compara peinado, ropa, edad y rasgos entre recortes para no mezclar personas.
-Identifícalos por su papel en la historia y su apariencia, NUNCA por quiénes son en la vida real.
-Si no estás seguro de qué recorte es de quién, no lo pongas. Si no hay recortes útiles, usa "cuadros" de las hojas generales.
+${personas.length ? `DATOS DE LAS PERSONAS DETECTADAS:
+${personas.map((p) => `- P${p.n}: aparece en ${p.apariciones} cuadros${p.hablante ? `, casi siempre mientras habla ${p.hablante}` : ""}${p.actor ? `, el comparador la reconoce como el actor/actriz de la biblioteca "${p.actor}"` : ""}`).join("\n")}
+Asigna a cada personaje su fila P usando la historia, quién habla, el vestuario, la edad y el papel. Una fila P es de un solo personaje.` : ""}
+Identifícalos por su papel en la historia, NUNCA por quiénes son en la vida real.
+Si no estás seguro de qué fila es de quién, pon 0. Si no hay filas útiles, usa "cuadros" de las hojas generales.
 En cuadros_momento elige los cuadros generales que mejor muestran el lugar del momento cumbre.`,
     },
   ];

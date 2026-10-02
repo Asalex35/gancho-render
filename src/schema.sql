@@ -132,3 +132,20 @@ CREATE INDEX IF NOT EXISTS propuestas_ep_all_idx ON propuestas (episodio_id);
 CREATE INDEX IF NOT EXISTS episodios_estado_idx ON episodios (estado, actualizado) WHERE estado IN ('en_cola','pensando','procesando');
 -- Un mismo video subido no se puede registrar dos veces.
 CREATE UNIQUE INDEX IF NOT EXISTS episodios_video_key_uq ON episodios ((video->>'key')) WHERE video->>'key' IS NOT NULL;
+
+-- v4: biblioteca de rostros por actor (con permiso de los actores)
+CREATE TABLE IF NOT EXISTS actor_caras (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  actor_id    uuid NOT NULL REFERENCES actores(id) ON DELETE CASCADE,
+  key         text NOT NULL,              -- recorte de la cara (768×768)
+  huella      real[] NOT NULL,            -- 128 números para comparar rostros
+  calidad     real NOT NULL DEFAULT 0,
+  giro        real NOT NULL DEFAULT 0,
+  origen      text NOT NULL DEFAULT 'foto', -- foto (subida) o episodio
+  foto_key    text,                       -- foto original de la que salió (origen foto)
+  episodio_id uuid,
+  creado      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS actor_caras_actor_idx ON actor_caras (actor_id, calidad DESC);
+ALTER TABLE actores ADD COLUMN IF NOT EXISTS auto boolean NOT NULL DEFAULT false; -- creado por Gancho, falta ponerle nombre
+ALTER TABLE canales ALTER COLUMN modelo SET DEFAULT 'pro';

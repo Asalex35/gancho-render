@@ -16,6 +16,7 @@ import { tipoImagen, normalizarFoto, portadaFinal, portadaPropia, miniatura } fr
 import { interpretar, PLANTILLA, normal } from "./lotes.js";
 import * as ia from "./ai/claude.js";
 import { transcripcionDisponible } from "./transcribir.js";
+import * as biblioteca from "./biblioteca.js";
 import fs from "node:fs";
 import os from "node:os";
 import crypto from "node:crypto";
@@ -119,19 +120,25 @@ export function crearApp() {
     return keys;
   }
   app.get("/api/actores", envolver(async (req, res) => {
-    res.json(await all("SELECT id, nombre, fotos, creado_por, creado FROM actores ORDER BY lower(nombre)"));
+    res.json(await all(`SELECT a.id, a.nombre, a.fotos, a.creado_por, a.creado, a.auto,
+        (SELECT count(*)::int FROM actor_caras ac WHERE ac.actor_id = a.id) AS n_caras,
+        (SELECT key FROM actor_caras ac WHERE ac.actor_id = a.id ORDER BY calidad DESC LIMIT 1) AS mejor_cara
+      FROM actores a ORDER BY a.auto DESC, lower(a.nombre)`));
   }));
   app.post("/api/actores", subir.array("fotos", 8), envolver(async (req, res) => {
     const nombre = limpiar(req.body.nombre, 80);
     if (!nombre) throw publico("Escribe el nombre del actor.");
     if (!req.files?.length) throw publico("Sube al menos una foto.");
     const fotos = await guardarFotos(req.files);
-    res.json(await one("INSERT INTO actores (nombre, fotos, creado_por) VALUES ($1, $2, $3) RETURNING *", [nombre, JSON.stringify(fotos), req.usuario]));
+    const a = await one("INSERT INTO actores (nombre, fotos, creado_por) VALUES ($1, $2, $3) RETURNING *", [nombre, JSON.stringify(fotos), req.usuario]);
+    for (const f of fotos) biblioteca.procesarFoto(a.id, f).catch((e) => console.warn("Biblioteca:", e.message)); // huella en segundo plano
+    res.json(a);
   }));
   app.post("/api/actores/:id/fotos", subir.array("fotos", 8), envolver(async (req, res) => {
     const fotos = await guardarFotos(req.files);
     const a = await one("UPDATE actores SET fotos = fotos || $2::jsonb WHERE id = $1 RETURNING *", [uuid(req.params.id), JSON.stringify(fotos)]);
     if (!a) throw publico("Ese actor no existe.", 404);
+    for (const f of fotos) biblioteca.procesarFoto(a.id, f).catch((e) => console.warn("Biblioteca:", e.message));
     res.json(a);
   }));
   app.patch("/api/actores/:id", envolver(async (req, res) => {
@@ -145,7 +152,10 @@ export function crearApp() {
       fotos = fotos.filter((k) => !quitar.includes(k));
       for (const k of quitar) await storage.borrar(k);
     }
-    res.json(await one("UPDATE actores SET nombre = $2, fotos = $3 WHERE id = $1 RETURNING *", [a.id, nombre, JSON.stringify(fotos)]));
+    if (Array.isArray(req.body.quitarFotos)) await q("DELETE FROM actor_caras WHERE actor_id = $1 AND foto_key = ANY($2)", [a.id, req.body.quitarFotos]);
+    // Al ponerle nombre a un actor creado por Gancho, deja de estar "sin nombre".
+    res.json(await one("UPDATE actores SET nombre = $2, fotos = $3, auto = CASE WHEN $4 THEN false ELSE auto END WHERE id = $1 RETURNING *",
+      [a.id, nombre, JSON.stringify(fotos), Boolean(limpiar(req.body.nombre, 80))]));
   }));
   app.delete("/api/actores/:id", envolver(async (req, res) => {
     const dueno = await one("SELECT creado_por FROM actores WHERE id = $1", [uuid(req.params.id)]);
@@ -169,7 +179,9 @@ export function crearApp() {
       const fotos = (Array.isArray(c.fotos) ? c.fotos : []).filter((k) => typeof k === "string" && k.startsWith("cuadros/") && storage.keyValida(k)).slice(0, 3);
       return { actorId: actor?.id || null, actorNombre: actor?.nombre || null, personaje, edad: limpiar(c.edad, 20),
         rol: ROLES.includes(c.rol) ? c.rol : "otro", vestuario: limpiar(c.vestuario, 200), descripcion: limpiar(c.descripcion, 300), hablante: limpiar(c.hablante, 4) || null,
-        fotos: actor ? [] : fotos, tieneFotos: Boolean(actor?.fotos?.length || fotos.length) };
+        fotos, tieneFotos: Boolean(actor?.fotos?.length || fotos.length), reconocido: Boolean(c.reconocido && actor),
+        // Huella de la cara (128 números) del flujo automático: se conserva para medir el parecido.
+        huella: Array.isArray(c.huella) && c.huella.length === 128 && c.huella.every((x) => typeof x === "number" && Number.isFinite(x)) ? c.huella : null };
     }).filter(Boolean);
   }
   async function datosEpisodio(b) {
@@ -183,7 +195,7 @@ export function crearApp() {
     if (b.duracion_min !== undefined && b.duracion_min !== "" && b.duracion_min !== null && !(dur >= 1 && dur <= 600)) throw publico("La duración debe ser en minutos, entre 1 y 600.");
     if (dur >= 1 && dur <= 600) brief.duracion_min = dur;
     if (!brief.sinopsis) throw publico("Falta la sinopsis.");
-    return { canal, modelo: Object.hasOwn(nb.MODELOS, b.modelo || "") ? b.modelo : "nb2", titulo: limpiar(b.titulo, 120) || brief.sinopsis.slice(0, 60), brief, cast: await armarCast(b.cast) };
+    return { canal, modelo: Object.hasOwn(nb.MODELOS, b.modelo || "") ? b.modelo : "pro", titulo: limpiar(b.titulo, 120) || brief.sinopsis.slice(0, 60), brief, cast: await armarCast(b.cast) };
   }
 
   app.get("/api/episodios", envolver(async (req, res) => {
@@ -376,7 +388,7 @@ export function crearApp() {
     const canales = await repo.canales();
     const canal = canales.find((c) => c.id === req.body.canal)?.id;
     if (!canal) throw publico("Elige el canal del lote.");
-    const modelo = Object.hasOwn(nb.MODELOS, req.body.modelo || "") ? req.body.modelo : "nb2";
+    const modelo = Object.hasOwn(nb.MODELOS, req.body.modelo || "") ? req.body.modelo : "pro";
     const { filas, error } = await interpretar(req.body.texto, canales);
     if (error) throw publico(error);
     const validas = filas.filter((f) => !f.errores.length);
@@ -587,7 +599,7 @@ export function crearApp() {
         estilo_visual=$10, ejemplos=$11, tags_base=$12, modelo=$13, auto_aprobar=$14, webhook_url=$15 RETURNING *`,
       [id, nombre, limpiar(b.voz, 800), limpiar(b.descripcion_fija, 3000), limpiar(b.disclaimer, 1500), JSON.stringify(hashtags), b.activo !== false,
         Object.hasOwn(IDIOMAS, b.idioma || "") ? b.idioma : "es", limpiar(b.pais, 60), limpiar(b.estilo_visual, 800), JSON.stringify(lista(b.ejemplos, 120, 20)),
-        JSON.stringify(lista(b.tags_base, 60, 15)), Object.hasOwn(nb.MODELOS, b.modelo || "") ? b.modelo : "nb2", umbral, webhook || null]));
+        JSON.stringify(lista(b.tags_base, 60, 15)), Object.hasOwn(nb.MODELOS, b.modelo || "") ? b.modelo : "pro", umbral, webhook || null]));
   }));
   app.post("/api/admin/canales/sugerir", soloAdmin, envolver(async (req, res) => {
     const ejemplos = String(req.body.ejemplos || "").split(/\r?\n/).map((x) => limpiar(x, 120)).filter(Boolean).slice(0, 20);
