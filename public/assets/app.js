@@ -99,7 +99,7 @@ document.getElementById("salir").addEventListener("click", async () => { await a
 async function ruta() {
   clearTimeout(poll); ultimoJSON = ""; editando = false; navId++;
   const [, a = "", id, b] = location.hash.split("/");
-  document.querySelectorAll("#nav a").forEach((n) => n.toggleAttribute("aria-current", n.dataset.r === (a === "ep" || a === "nuevo" ? "" : a)));
+  document.querySelectorAll("#nav a").forEach((n) => n.toggleAttribute("aria-current", n.dataset.r === (a === "ep" ? "" : a)));
   document.querySelectorAll("#nav a[aria-current]").forEach((n) => n.setAttribute("aria-current", "page"));
   window.scrollTo(0, 0);
   try {
@@ -393,7 +393,7 @@ async function vistaEditor(id) {
         me.refsPublicas ? null : h("div", { class: "aviso" }, "Modo local: Nano Banana no ve las fotos de los actores hasta publicar la app."),
         castBox)),
     h("div", { class: "row", style: { justifyContent: "flex-end" } },
-      existente ? h("button", { class: "btn big", type: "button", onclick: () => enviar(false) }, "Solo guardar") : null, btnGenerar)));
+      h("button", { class: "btn big", type: "button", onclick: () => enviar(false) }, existente ? "Solo guardar" : "Guardar sin generar"), btnGenerar)));
 }
 
 function formNuevoActor(alGuardar) {
@@ -440,6 +440,28 @@ async function vistaEpisodio(id, t = navId) {
   else cargarMe().catch(() => {});
 }
 
+// Modo manual: subir una portada hecha por el diseñador; Gancho la califica y escribe el paquete.
+function subirPortadaPropia(p, recargar) {
+  const input = h("input", { type: "file", accept: "image/jpeg,image/png,image/webp", hidden: true });
+  const titulo = h("input", { type: "text", id: "propia-titulo", placeholder: "Título para esta portada (opcional)" });
+  const vista = h("div", { class: "previews" });
+  input.addEventListener("change", () => { const f = input.files[0]; vista.replaceChildren(...(f ? [h("img", { src: URL.createObjectURL(f), alt: "", style: { width: "240px", height: "auto" } })] : [])); });
+  const btn = h("button", { class: "btn primary", type: "button", onclick: async () => {
+    const f = input.files[0];
+    if (!f) return toast("Elige la imagen de la portada.", true);
+    if (f.size > 8 * 1024 * 1024) return toast("La imagen debe pesar menos de 8 MB.", true);
+    const fd = new FormData(); fd.append("imagen", f); fd.append("titulo", titulo.value);
+    btn.disabled = true; btn.textContent = "Subiendo…";
+    try { await api(`/api/episodios/${p.id}/portada-propia`, { method: "POST", form: fd }); cerrarModal(); toast("Portada subida. Gancho la está calificando."); recargar(); }
+    catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = "Subir"; }
+  } }, "Subir");
+  abrirModal(h("h2", {}, "Subir mi propia portada"),
+    h("p", { class: "muted", style: { margin: 0 } }, "Para portadas hechas por el diseñador. Gancho la califica igual que las suyas y te escribe descripción y tags cuando la elijas."),
+    h("div", { class: "row" }, h("button", { class: "btn", type: "button", onclick: () => input.click() }, "Elegir imagen"), input), vista,
+    h("label", {}, "Título", titulo),
+    h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cancelar"), btn));
+}
+
 function pintarEpisodio(p) {
   const recargar = () => { ultimoJSON = ""; clearTimeout(poll); vistaEpisodio(p.id, navId); };
   const generar = async () => { try { await api(`/api/episodios/${p.id}/generar`, { method: "POST" }); recargar(); } catch (e) { toast(e.message, true); } };
@@ -453,6 +475,7 @@ function pintarEpisodio(p) {
       h("h1", {}, p.titulo)),
     h("div", { class: "row" },
       h("a", { class: "btn", href: `#/ep/${p.id}/editar` }, "Editar historia y cast"),
+      h("button", { class: "btn", type: "button", disabled: pensando, onclick: () => subirPortadaPropia(p, recargar) }, "Subir mi portada"),
       p.propuestas.length ? h("button", { class: "btn", type: "button", disabled: pensando, onclick: generar }, "3 propuestas nuevas") : null,
       h("button", { class: "btn ghost danger", type: "button", onclick: () => confirmar("¿Borrar este episodio?", "Se borran las portadas y versiones. No se puede deshacer.",
         async () => { await api(`/api/episodios/${p.id}`, { method: "DELETE" }); location.hash = p.lote_id ? `#/lote/${p.lote_id}` : "#/"; }, "Sí, borrar") }, "Borrar")))];
@@ -472,7 +495,10 @@ function pintarEpisodio(p) {
   } else if (p.estado === "error") {
     partes.push(h("div", { class: "vacio" }, h("h2", {}, "No se pudieron crear las propuestas"), h("p", { class: "muted" }, p.error || ""), h("button", { class: "btn primary", type: "button", onclick: generar }, "Intentar de nuevo")));
   } else if (!p.propuestas.length) {
-    partes.push(h("div", { class: "vacio" }, h("h2", {}, "Listo para generar"), h("button", { class: "btn primary big", type: "button", onclick: generar }, "Generar 3 propuestas")));
+    partes.push(h("div", { class: "vacio" }, h("h2", {}, "¿Cómo quieres hacer la portada?"),
+      h("div", { class: "row", style: { justifyContent: "center" } },
+        h("button", { class: "btn primary big", type: "button", onclick: generar }, "Que Gancho haga 3 propuestas"),
+        h("button", { class: "btn big", type: "button", onclick: () => subirPortadaPropia(p, recargar) }, "Subir la mía"))));
   }
   if (p.gancho && !pensando) {
     const g = p.gancho;
@@ -532,7 +558,8 @@ function tarjeta(p, x, i, recargar) {
     h("div", { class: "body" },
       h("div", { class: "row", style: { gap: "6px" } }, h("span", { class: "tag" }, `Opción ${i + 1}`), x.version > 1 ? h("span", { class: "tag" }, `v${x.version}`) : null,
         caras ? h("span", { class: `tag ${caras[1]}` }, caras[0]) : null, x.editadoAMano ? h("span", { class: "tag" }, "Título editado") : null,
-        img.proveedor && img.proveedor !== "nanobanana" ? h("span", { class: "tag warn", title: "Nano Banana falló y se usó el respaldo" }, `Hecha con ${{ google: "Google", fal: "Seedream" }[img.proveedor] || img.proveedor}`) : null),
+        x.propia ? h("span", { class: "tag", title: "Subida por el equipo" }, "Hecha por el equipo") : null,
+        img.proveedor && !["nanobanana", "manual"].includes(img.proveedor) ? h("span", { class: "tag warn", title: "Nano Banana falló y se usó el respaldo" }, `Hecha con ${{ google: "Google", fal: "Seedream" }[img.proveedor] || img.proveedor}`) : null),
       h("div", { class: "stack", style: { gap: "4px" } }, x.rehaciendo === "titulo" ? h("div", { class: "row muted" }, h("div", { class: "spin" }), "Rehaciendo el título…") : titulo,
         x.traduccion ? h("span", { class: "trad" }, `En español: ${x.traduccion}`) : null, cuenta),
       h("div", { class: "score" },
@@ -540,7 +567,7 @@ function tarjeta(p, x, i, recargar) {
         h("div", { class: "stack", style: { gap: "6px" } },
           h("div", { class: "row", style: { gap: "6px" } }, h("b", { style: { color: colorScore(total) } }, etiquetaScore(total)),
             x.evaluando ? h("span", { class: "tag" }, "Revisando imagen…") : ev ? h("span", { class: "tag ok" }, "Revisada con la imagen") : h("span", { class: "tag" }, "Estimada")),
-          h("div", { class: "bars" }, [["Tabú", c.tabu], ["Especificidad", c.especificidad], ["Misterio", c.misterio], ["Claridad visual", c.claridad_visual]]
+          x.propia ? h("span", { class: "muted", style: { fontSize: ".8rem" } }, "Calificada por Claude viendo la imagen") : h("div", { class: "bars" }, [["Tabú", c.tabu], ["Especificidad", c.especificidad], ["Misterio", c.misterio], ["Claridad visual", c.claridad_visual]]
             .map(([k, v]) => h("div", { class: "bar" }, h("span", {}, k), h("i", { style: { "--v": v } }), h("span", {}, v)))))),
       h("div", {}, h("div", { class: "eyebrow", style: { marginBottom: "6px" } }, "Por qué va a funcionar"), h("ul", { class: "why" }, razones.slice(0, 3).map((r) => h("li", {}, r)))),
       x.errorRehacer ? h("div", { class: "probs" }, x.errorRehacer) : null,
@@ -558,7 +585,7 @@ function tarjeta(p, x, i, recargar) {
 }
 
 function rehacer(x, recargar) {
-  const st = { objetivo: "portada", razones: new Set() };
+  const st = { objetivo: x.propia ? "titulo" : "portada", razones: new Set() };
   const chips = h("div", { class: "chips" });
   const pintarChips = () => {
     const lista = st.objetivo === "titulo" ? RAZONES.titulo : st.objetivo === "portada" ? RAZONES.portada : [...RAZONES.portada, ...RAZONES.titulo];
@@ -577,7 +604,8 @@ function rehacer(x, recargar) {
   } }, "Rehacer con esto");
   pintarChips();
   abrirModal(h("h2", {}, "¿Qué no te gustó?"), h("p", { class: "muted", style: { margin: 0 } }, `"${x.titulo}"`),
-    h("label", {}, "¿Qué rehago?", seg({ portada: "La portada", titulo: "El título", ambos: "Las dos" }, st.objetivo, (v) => { st.objetivo = v; pintarChips(); })),
+    x.propia ? h("p", { class: "muted", style: { margin: 0 } }, "Esta portada la subió el equipo: Gancho solo rehace el título.")
+      : h("label", {}, "¿Qué rehago?", seg({ portada: "La portada", titulo: "El título", ambos: "Las dos" }, st.objetivo, (v) => { st.objetivo = v; pintarChips(); })),
     h("div", { class: "stack", style: { gap: "8px" } }, h("b", { style: { fontSize: ".88rem" } }, "¿Por qué?"), chips),
     h("label", {}, "¿Qué cambiarías?", h("span", { class: "hint" }, "Entre más concreto, mejor sale la siguiente."), comentario),
     h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cancelar"), btn));
@@ -601,9 +629,28 @@ function paqueteFinal(p) {
   const k = p.paquete;
   if (!x) return null;
   const tags = k.tags.join(", ");
-  const caja = (titulo, valor, extra) => h("div", { class: "copybox" },
-    h("div", { class: "row" }, h("b", {}, titulo), h("div", { class: "row", style: { gap: "8px" } }, extra, h("button", { class: "btn small", type: "button", onclick: () => copiar(valor) }, "Copiar"))),
-    titulo === "Descripción" ? h("textarea", { readonly: true, id: "desc-final" }, valor) : h("div", { class: "val" }, valor));
+  // Descripción, tags y hashtags se pueden editar a mano y guardar.
+  const campos = {};
+  const caja = (titulo, valor, extra, editable) => {
+    let el;
+    if (editable) {
+      el = h("textarea", { id: `paq-${editable}`, style: { minHeight: editable === "descripcion" ? "160px" : "70px" } });
+      el.value = valor;
+      el.addEventListener("input", () => { guardarBtn.disabled = false; });
+      campos[editable] = el;
+    }
+    return h("div", { class: "copybox" },
+      h("div", { class: "row" }, h("b", {}, titulo), h("div", { class: "row", style: { gap: "8px" } }, extra,
+        h("button", { class: "btn small", type: "button", onclick: () => copiar(el ? el.value : valor) }, "Copiar"))),
+      el || h("div", { class: "val" }, valor));
+  };
+  const guardarBtn = h("button", { class: "btn primary", type: "button", disabled: true, onclick: async () => {
+    guardarBtn.disabled = true;
+    try {
+      await api(`/api/episodios/${p.id}/paquete`, { method: "PUT", body: { descripcion: campos.descripcion.value, tags: campos.tags.value, hashtags: campos.hashtags.value } });
+      toast("Cambios guardados");
+    } catch (e) { toast(e.message, true); guardarBtn.disabled = false; }
+  } }, "Guardar cambios");
   const tieneLogo = me.canales.find((c) => c.id === p.canal)?.logo;
   return h("section", { id: "paquete", class: "panel stack", style: { marginTop: "28px", gap: "18px" } },
     h("div", { class: "head", style: { marginBottom: 0 } }, h("div", {}, h("div", { class: "eyebrow" }, "Paquete final"), h("h2", {}, "Listo para subir a YouTube")),
@@ -616,9 +663,10 @@ function paqueteFinal(p) {
         caja("Título", x.titulo, h("span", { class: "count" }, `${x.titulo.length}/100`)),
         h("div", { class: "copybox" }, h("b", {}, "Títulos para la prueba A/B de YouTube"),
           ...(k.titulos_alternos || []).map((t) => h("div", { class: "row", style: { justifyContent: "space-between", flexWrap: "nowrap" } }, h("div", { class: "val", style: { flex: 1 } }, t), h("button", { class: "btn small", type: "button", onclick: () => copiar(t) }, "Copiar")))),
-        caja("Descripción", k.descripcion),
-        caja("Tags", tags, h("span", { class: `count${tags.length > 500 ? " warn" : ""}` }, `${tags.length}/500`)),
-        caja("Hashtags", k.hashtags.join(" ")))));
+        caja("Descripción", k.descripcion, null, "descripcion"),
+        caja("Tags", tags, h("span", { class: `count${tags.length > 500 ? " warn" : ""}` }, `${tags.length}/500`), "tags"),
+        caja("Hashtags", k.hashtags.join(" "), null, "hashtags"),
+        h("div", { class: "row", style: { justifyContent: "flex-end" } }, k.editadoAMano ? h("span", { class: "tag" }, "Editado a mano") : null, guardarBtn))));
 }
 
 // ================= ACTORES =================

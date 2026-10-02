@@ -43,3 +43,8 @@ export async function portadaFinal(imagenKey, logoKey) {
     if (out.length < 2 * 1024 * 1024 || quality === 68) return out;
   }
 }
+
+// Portada subida por el equipo: se guarda en JPG 16:9 (máx. 2560 px) y sin metadatos.
+export async function portadaPropia(buf) {
+  return sharp(buf, LIM).rotate().resize(2560, 1440, { fit: "cover", withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer();
+}

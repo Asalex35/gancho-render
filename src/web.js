@@ -12,7 +12,7 @@ import * as storage from "./storage.js";
 import * as nb from "./ai/nanobanana.js";
 import { enviar, PRIORIDAD, estadoCola } from "./jobs.js";
 import { orden as ordenProveedores, PROVEEDORES } from "./ai/imagen.js";
-import { tipoImagen, normalizarFoto, portadaFinal } from "./imagenes.js";
+import { tipoImagen, normalizarFoto, portadaFinal, portadaPropia, miniatura } from "./imagenes.js";
 import { interpretar, PLANTILLA, normal } from "./lotes.js";
 import * as ia from "./ai/claude.js";
 import { transcripcionDisponible } from "./transcribir.js";
@@ -235,6 +235,46 @@ export function crearApp() {
   }));
 
   // Portada final 1280x720 con logo, lista para YouTube
+  // ---------- Modo manual ----------
+  // Portada hecha por el equipo (diseñador): se guarda como una propuesta más y Claude la califica.
+  app.post("/api/episodios/:id/portada-propia", subir.single("imagen"), envolver(async (req, res) => {
+    const ep = await repo.episodio(uuid(req.params.id));
+    if (!ep) throw publico("Ese episodio no existe.", 404);
+    if (["en_cola", "pensando", "procesando"].includes(ep.estado)) throw publico("Espera a que termine de generar.", 409);
+    if (!req.file || !tipoImagen(req.file.buffer)) throw publico("Sube la portada en JPG, PNG o WEBP.");
+    const buf = await portadaPropia(req.file.buffer);
+    const key = await storage.guardar("portadas", buf, "jpg");
+    const mini = await storage.guardar("mini", await miniatura(buf), "jpg");
+    const titulo = limpiar(req.body.titulo, 100) || ep.propuestas.find((x) => x.id === ep.elegida)?.data.titulo || ep.propuestas[0]?.data.titulo || ep.titulo;
+    const data = {
+      titulo, traduccion: "", formula: "Libre", composicion: "Otra", concepto: "Portada subida por el equipo", personajes_en_portada: [],
+      prompt_imagen: "", calificacion: { total: 0, tabu: 0, especificidad: 0, misterio: 0, claridad_visual: 0 }, porque_funciona: [], riesgo: "", propia: true,
+    };
+    const p = await one(`INSERT INTO propuestas (episodio_id, slot, data, imagen)
+        VALUES ($1, (SELECT coalesce(max(slot), -1) + 1 FROM propuestas WHERE episodio_id = $1 AND NOT archivada), $2, $3) RETURNING id`,
+      [ep.id, data, { estado: "lista", key, mini, proveedor: "manual", intentos: 1, usuario: req.usuario }]);
+    await q("UPDATE episodios SET estado = CASE WHEN estado IN ('borrador','error') THEN 'listo' ELSE estado END, actualizado = now() WHERE id = $1", [ep.id]);
+    await enviar("evaluar", { propuestaId: p.id, key, prioridad: PRIORIDAD.interactiva, sinReintento: true });
+    res.json({ ok: true });
+  }));
+
+  // Editar a mano descripción, tags y hashtags del paquete final.
+  app.put("/api/episodios/:id/paquete", envolver(async (req, res) => {
+    const ep = await one("SELECT paquete FROM episodios WHERE id = $1", [uuid(req.params.id)]);
+    if (!ep?.paquete) throw publico("Primero elige una portada.", 409);
+    const lista = (v, sep) => String(v || "").split(sep).map((x) => limpiar(x, 100)).filter(Boolean);
+    const cambios = {
+      descripcion: limpiar(req.body.descripcion, 5000),
+      tags: lista(req.body.tags, /,/).slice(0, 40),
+      hashtags: lista(req.body.hashtags, /[\s,]+/).filter((h) => h.startsWith("#")).slice(0, 15),
+      editadoAMano: true, desactualizado: false,
+    };
+    if (!cambios.descripcion) throw publico("La descripción no puede quedar vacía.");
+    if (cambios.tags.join(", ").length > 500) throw publico("Los tags pasan de 500 caracteres (el máximo de YouTube).");
+    await q("UPDATE episodios SET paquete = paquete || $2::jsonb, actualizado = now() WHERE id = $1", [req.params.id, cambios]);
+    res.json({ ok: true });
+  }));
+
   app.get("/api/episodios/:id/portada.jpg", envolver(async (req, res) => {
     const ep = await repo.episodio(uuid(req.params.id));
     const p = ep?.propuestas.find((x) => x.id === (req.query.propuesta || ep.elegida));
@@ -257,6 +297,7 @@ export function crearApp() {
     if (!razones.length && !comentario) throw publico("Dinos por qué no te gustó para poder mejorarla.");
     const p = await propuestaConEpisodio(req.params.id);
     if (p.eligiendo) throw publico("Espera a que termine de escribir la descripción.", 409);
+    if (p.data.propia && objetivo !== "titulo") throw publico("Esta portada la subió el equipo: solo se puede rehacer el título.");
     if (objetivo !== "titulo") await reservarCupo(req.usuario, 1);
     const r = await q("UPDATE propuestas SET rehaciendo = $2, error_rehacer = NULL WHERE id = $1 AND rehaciendo IS NULL", [p.id, objetivo]);
     if (!r.rowCount) { if (objetivo !== "titulo") await devolverCupo(req.usuario, 1); throw publico("Ya se está rehaciendo.", 409); }
