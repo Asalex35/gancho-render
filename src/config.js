@@ -48,7 +48,9 @@ export const config = {
     localDir: env.DATA_DIR || "./data",
     bucket: env.S3_BUCKET,
     region: env.S3_REGION || "auto",
-    endpoint: env.S3_ENDPOINT, // Cloudflare R2: https://<cuenta>.r2.cloudflarestorage.com
+    endpoint: env.S3_ENDPOINT, // R2: https://<cuenta>.r2.cloudflarestorage.com · Supabase: https://<proyecto>.storage.supabase.co/storage/v1/s3
+    // Supabase (y MinIO) necesitan el estilo de ruta: https://endpoint/bucket/archivo
+    forcePathStyle: env.S3_FORCE_PATH_STYLE ? env.S3_FORCE_PATH_STYLE === "1" : /supabase/.test(env.S3_ENDPOINT || ""),
     accessKeyId: env.S3_ACCESS_KEY_ID,
     secretAccessKey: env.S3_SECRET_ACCESS_KEY,
   },

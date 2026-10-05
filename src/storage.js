@@ -15,7 +15,7 @@ const KEY_OK = /^[a-z]+\/[A-Za-z0-9_-]+\.(jpg|png|webp|svg|mp4|mov|webm|mkv|m4v)
 export const keyValida = (k) => KEY_OK.test(k || "");
 
 const s3 = S.driver === "s3"
-  ? new S3Client({ region: S.region, endpoint: S.endpoint, requestHandler: { requestTimeout: 120000, connectionTimeout: 10000 }, credentials: { accessKeyId: S.accessKeyId, secretAccessKey: S.secretAccessKey } })
+  ? new S3Client({ region: S.region, endpoint: S.endpoint, forcePathStyle: S.forcePathStyle, requestHandler: { requestTimeout: 120000, connectionTimeout: 10000 }, credentials: { accessKeyId: S.accessKeyId, secretAccessKey: S.secretAccessKey } })
   : null;
 const local = (key) => path.resolve(S.localDir, key);
 
