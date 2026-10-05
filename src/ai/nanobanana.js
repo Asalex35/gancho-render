@@ -40,7 +40,8 @@ export async function crearTarea({ modelo = "nb2", prompt, imageUrls = [] }) {
     prompt: prompt.slice(0, 19000),
     imageUrls: imageUrls.slice(0, m.maxRefs),
     aspectRatio: "16:9",
-    resolution: config.imageResolution,
+    // En nanobananaapi.ai, Pro cuesta lo mismo en 1K que en 2K (18 créditos): se pide en 2K.
+    resolution: modelo === "pro" ? (process.env.PRO_RESOLUTION || "2K") : config.imageResolution,
   };
   if (modelo === "nb2") body.outputFormat = "jpg";
   // Pro exige callback. Solo lo usamos como aviso; el estado real se consulta con la cola.

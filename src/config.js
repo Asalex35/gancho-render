@@ -31,7 +31,7 @@ export const config = {
   legacyUsers: env.APP_USERS || "",
   mockImages: env.NANOBANANA_MOCK === "1" && !PROD,
   imageResolution: env.IMAGE_RESOLUTION || "1K",
-  creditsPerImage: num(env.CREDITS_PER_IMAGE, 8),
+  creditsPerImage: num(env.CREDITS_PER_IMAGE, 18), // Nano Banana Pro 1K/2K en nanobananaapi.ai
   limits: {
     // Coherente con los lotes: 200 episodios × 3 portadas = 600, más reintentos.
     userDailyImages: num(env.DAILY_IMAGE_LIMIT, 700),
