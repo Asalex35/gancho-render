@@ -1,0 +1,90 @@
+# Render Blueprint: web + worker + Postgres.
+# Para empezar barato puedes borrar el worker y poner ROLE=all en la web.
+databases:
+  - name: gancho-db
+    plan: basic-256mb
+    databaseName: gancho
+
+envVarGroups:
+  - name: gancho-comun
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: IMAGE_RESOLUTION
+        value: 1K
+      - key: CREDITS_PER_IMAGE
+        value: "8"
+      - key: DAILY_IMAGE_LIMIT
+        value: "700"
+      - key: ORG_DAILY_IMAGE_LIMIT
+        value: "3000"
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: CALLBACK_SECRET
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: NANOBANANA_API_KEY
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: FAL_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: TRANSCRIBE_MAX_MINUTES
+        value: "40"
+      - key: FACE_SCAN_SECONDS
+        value: "300"
+      - key: TRANSCRIBE_API_KEY
+        sync: false
+      - key: NOTIFY_WEBHOOK_URL
+        sync: false
+      - key: VIDEO_RETENTION_DAYS
+        value: "7"
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+
+services:
+  - type: web
+    name: gancho-web
+    runtime: node
+    plan: starter
+    buildCommand: npm ci
+    startCommand: node server.js
+    healthCheckPath: /salud
+    envVars:
+      - key: ROLE
+        value: web
+      - key: ADMIN_USER
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase: { name: gancho-db, property: connectionString }
+      - fromGroup: gancho-comun
+
+  - type: worker
+    name: gancho-worker
+    runtime: node
+    plan: standard   # ffmpeg necesita CPU y memoria para leer videos largos
+    buildCommand: npm ci
+    startCommand: node server.js
+    envVars:
+      - key: ROLE
+        value: worker
+      - key: CLAUDE_CONCURRENCY
+        value: "4"
+      - key: IMAGE_CONCURRENCY
+        value: "6"
+      - key: DATABASE_URL
+        fromDatabase: { name: gancho-db, property: connectionString }
+      - fromGroup: gancho-comun
