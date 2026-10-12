@@ -39,7 +39,7 @@ export async function generar({ prompt, refs, modelo, evitar = [], alCambiar }) 
   const errores = [];
   for (const [i, p] of intentar.entries()) {
     try {
-      if (i > 0 && alCambiar) await alCambiar(p, errores.at(-1));
+      if (i > 0 && alCambiar) await alCambiar(p, errores.at(-1)?.message);
       if (p === "nanobanana") {
         const urls = refs.map((r) => r.url).filter(Boolean);
         return { proveedor: p, taskId: await nb.crearTarea({ modelo, prompt, imageUrls: urls.length === refs.length ? urls : [] }) };
@@ -48,11 +48,14 @@ export async function generar({ prompt, refs, modelo, evitar = [], alCambiar }) 
       return { proveedor: p, buffer };
     } catch (e) {
       registrarFalla(p);
-      errores.push(e.message);
+      errores.push(e);
       console.warn(`[imagen] ${p} falló: ${e.message}`);
     }
   }
-  throw Object.assign(new Error(`Ningún proveedor pudo hacer la imagen (${errores.join(" · ")}).`), { publico: true, reintentable: true });
+  // Sin créditos o llave inválida no se arregla reintentando; una caída temporal sí.
+  const reintentable = errores.some((e) => e.reintentable !== false);
+  const texto = errores.length === 1 && errores[0].publico ? errores[0].message : `Ningún proveedor pudo hacer la imagen (${errores.map((e) => e.message).join(" · ")}).`;
+  throw Object.assign(new Error(texto), { publico: true, reintentable });
 }
 
 export { registrarFalla };

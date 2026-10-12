@@ -3,3 +3,7 @@ node_modules/
 data/
 *.tmp
 .DS_Store
+
+# Investigación (no es código)
+research_notes/
+reports/

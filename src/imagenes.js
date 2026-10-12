@@ -48,3 +48,18 @@ export async function portadaFinal(imagenKey, logoKey) {
 export async function portadaPropia(buf) {
   return sharp(buf, LIM).rotate().resize(2560, 1440, { fit: "cover", withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer();
 }
+
+// Portadas oscuras se pierden junto a las de la competencia (promedio medido: ~116 de 255).
+// Si la imagen queda por debajo, se levantan sombras y medios con una curva gamma (no quema las luces).
+export const LUZ_MINIMA = 105;
+export async function aclarar(buf, objetivo = 120) {
+  const luz = async (b) => (await sharp(b, LIM).resize(320, 180).greyscale().stats()).channels[0].mean;
+  const antes = await luz(buf);
+  if (antes >= LUZ_MINIMA) return { buf, antes: Math.round(antes), despues: Math.round(antes), cambio: false };
+  const exp = Math.min(1, Math.max(0.5, Math.log(objetivo / 255) / Math.log(Math.max(antes, 20) / 255)));
+  const { data, info } = await sharp(buf, LIM).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const curva = Uint8Array.from({ length: 256 }, (_, i) => Math.round(255 * Math.pow(i / 255, exp)));
+  for (let i = 0; i < data.length; i++) data[i] = curva[data[i]];
+  const out = await sharp(data, { raw: info }).modulate({ saturation: 1.1 }).jpeg({ quality: 92, mozjpeg: true }).toBuffer();
+  return { buf: out, antes: Math.round(antes), despues: Math.round(await luz(out)), cambio: true };
+}

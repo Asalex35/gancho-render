@@ -15,7 +15,7 @@ import * as storage from "./storage.js";
 import * as nb from "./ai/nanobanana.js";
 import * as ia from "./ai/claude.js";
 import * as imagen from "./ai/imagen.js";
-import { tipoImagen, miniatura, paraClaude } from "./imagenes.js";
+import { tipoImagen, miniatura, paraClaude, aclarar } from "./imagenes.js";
 import * as video from "./video.js";
 import { transcribir, transcripcionDisponible, guionConHablantes } from "./transcribir.js";
 import * as caras from "./caras.js";
@@ -143,7 +143,12 @@ async function referencias(ep, data, { conEscena = true } = {}) {
   for (const c of enPortada) {
     const delEpisodio = c.fotos || [];
     let deBiblioteca = c.actorId ? await biblioteca.referencias(c.actorId, 3) : [];
-    if (!deBiblioteca.length && !delEpisodio.length && c.actorId) deBiblioteca = ((await one("SELECT fotos FROM actores WHERE id = $1", [c.actorId]))?.fotos || []).slice(0, 2);
+    // Pocas caras en la biblioteca (p. ej. una sola foto subida): se completa con las fotos originales,
+    // que además muestran peinado y vestuario.
+    if (c.actorId && delEpisodio.length + deBiblioteca.length < porPersonaje) {
+      const originales = (await one("SELECT fotos FROM actores WHERE id = $1", [c.actorId]))?.fotos || [];
+      deBiblioteca = [...deBiblioteca, ...originales].slice(0, 3);
+    }
     // Intercala: cara del episodio, cara de la biblioteca, medio cuerpo, otro ángulo…
     const orden = [delEpisodio[0], deBiblioteca[0], delEpisodio[1], deBiblioteca[1], delEpisodio[2], deBiblioteca[2]];
     const fotos = [...new Set(orden.filter(Boolean))].slice(0, porPersonaje);
@@ -167,7 +172,9 @@ LIKENESS IS THE TOP PRIORITY: each character must be instantly recognizable as t
 Copy the exact facial structure: eye shape and spacing, eyebrows, nose, lips, jawline, hairline, skin tone, wrinkles and age.
 Do not beautify, slim, de-age or change ethnicity. Photorealistic skin, no plastic or airbrushed look.
 Use the references ONLY for identity and wardrobe; build a new, more dramatic composition.\n\n` : "";
-  return `${cabeza}${prompt}${extra ? `\n\nFIX THESE PROBLEMS FROM THE PREVIOUS ATTEMPT: ${extra}` : ""}`;
+  // Las portadas de la competencia son claras y saturadas: una portada oscura se pierde en la página de inicio.
+  const luz = "LIGHTING: bright, high-key commercial lighting with vivid saturated colors; faces brightly and evenly lit. Even night or hospital scenes must read clearly at thumbnail size: no dark, gloomy or low-key images.";
+  return `${cabeza}${prompt}\n\n${luz}${extra ? `\n\nFIX THESE PROBLEMS FROM THE PREVIOUS ATTEMPT: ${extra}` : ""}`;
 }
 
 // Prepara cada referencia como URL pública (Nano Banana) y como base64 (Google / Seedream).
@@ -223,6 +230,17 @@ async function hImagen({ propuestaId, usuario, extra, prioridad, evitar = [], co
 }
 
 async function fallaImagen({ propuestaId }, e) {
+  // Si falló un repintado automático, se conserva la portada anterior: sigue siendo válida.
+  const conservada = await one(`UPDATE propuestas SET imagen = (imagen - 'autoReintento') || jsonb_build_object('estado','lista','error',null,'taskId',null,'repintadoFallido',$2::text)
+      WHERE id = $1 AND imagen->>'estado' <> 'lista' AND imagen ? 'autoReintento' AND imagen ? 'key' AND NOT archivada RETURNING imagen->>'key' AS key`,
+    [propuestaId, msg(e, "No se pudo repintar.")]);
+  if (conservada) {
+    // Quita la copia que se guardó en versiones antes de repintar (es la misma imagen).
+    await q(`DELETE FROM versiones WHERE id = (SELECT id FROM versiones WHERE propuesta_id = $1 AND imagen->>'key' = $2 ORDER BY creado DESC LIMIT 1)`, [propuestaId, conservada.key]);
+    const p = await repo.propuesta(propuestaId);
+    if (p) { await repo.tocarEpisodio(p.episodio_id); await quizaAutoElegir(p.episodio_id); }
+    return;
+  }
   await q(`UPDATE propuestas SET imagen = imagen || $2::jsonb WHERE id = $1 AND imagen->>'estado' <> 'lista'`,
     [propuestaId, { estado: "error", error: msg(e, "No se pudo crear la imagen.") }]);
   const p = await repo.propuesta(propuestaId);
@@ -263,12 +281,15 @@ async function descargar(url) {
 }
 
 async function guardarResultado(propuestaId, taskId, buf, prioridad) {
-  const ext = tipoImagen(buf);
+  let ext = tipoImagen(buf);
   if (!ext) throw new Error("El archivo recibido no es una imagen");
+  // Si salió oscura, se aclara para que no se pierda junto a las portadas de otros canales.
+  const luz = await aclarar(buf).catch(() => null);
+  if (luz?.cambio) { buf = luz.buf; ext = "jpg"; }
   const key = await storage.guardar("portadas", buf, ext);
   const mini = await storage.guardar("mini", await miniatura(buf), "jpg");
   const { rowCount } = await q(`UPDATE propuestas SET imagen = imagen || $3::jsonb WHERE id = $1 AND imagen->>'taskId' = $2 AND imagen->>'estado' = 'generando' AND NOT archivada`,
-    [propuestaId, taskId, { estado: "lista", key, mini, error: null }]);
+    [propuestaId, taskId, { estado: "lista", key, mini, error: null, luz: luz ? { antes: luz.antes, despues: luz.despues } : null }]);
   if (!rowCount) { await storage.borrar(key); await storage.borrar(mini); return; }
   const p = await repo.propuesta(propuestaId);
   await repo.tocarEpisodio(p.episodio_id);
@@ -337,7 +358,8 @@ async function hEvaluar({ propuestaId, key, prioridad, sinReintento }) {
   const p = await repo.propuesta(propuestaId);
   const ep = await one("SELECT elegida, eligiendo FROM episodios WHERE id = $1", [p.episodio_id]);
   // No se repinta sola si el usuario solo cambió el título, ni si ya está elegida o se está eligiendo.
-  const reintentar = !ev.aprobada && (p.imagen.intentos || 1) < 2 && !sinReintento && ep.elegida !== propuestaId && !ep.eligiendo;
+  const reintentar = !ev.aprobada && (p.imagen.intentos || 1) < 2 && !sinReintento && ep.elegida !== propuestaId && !ep.eligiendo
+    && (await alcanzaParaRepintar());
   const fila = await one(`UPDATE propuestas SET evaluacion = $3, evaluando = false,
       imagen = CASE WHEN $4 THEN imagen || jsonb_build_object('autoReintento', $5::jsonb, 'estado', 'en_cola') ELSE imagen END
     WHERE id = $1 AND imagen->>'key' = $2 AND imagen->>'estado' = 'lista' RETURNING id`, [propuestaId, key, ev, reintentar, JSON.stringify(ev.problemas)]);
@@ -352,6 +374,13 @@ async function hEvaluar({ propuestaId, key, prioridad, sinReintento }) {
     return enviar("imagen", { propuestaId, usuario: p.imagen.usuario, extra, prioridad, cobrar: true }, { prioridad });
   }
   await quizaAutoElegir(p.episodio_id);
+}
+
+// Sin créditos suficientes no se repinta sola: una portada imperfecta vale más que un error de "sin créditos".
+async function alcanzaParaRepintar() {
+  if (config.mockImages || imagen.orden()[0] !== "nanobanana") return true;
+  const c = await nb.creditos({ espera: 15000, fresco: true });
+  return c !== null && c >= config.creditsPerImage; // si no se sabe el saldo, no se arriesga la portada
 }
 
 // Cuando las 3 propuestas terminaron (listas o con error):

@@ -74,8 +74,12 @@ como un nativo del país del canal: adapta las fórmulas, NUNCA traduzcas palabr
 - Los escenarios de la portada deben verse del país del canal (México, EE. UU., Brasil...).
 Las explicaciones para el equipo (concepto, por qué funciona, riesgo, gancho) van SIEMPRE en español.
 
+## Luz (obligatoria)
+- Portadas claras, con luz brillante y colores vivos, aunque la escena sea de noche o en un hospital: la competencia (CLAC, Andy Torres) usa fondos claros y saturados, y una portada oscura se pierde junto a ellas. Nada de escenas en penumbra.
+
 ## Reglas de seguridad de marca (obligatorias)
 - Nunca sexualizar ni poner en escenas románticas a menores de edad. Si un personaje es menor, mostrarlo solo en contexto familiar no romántico.
+- Un personaje adulto con pareja, novio o prometido NUNCA lleva nada que parezca uniforme escolar (corbata, chaleco, falda de cuadros), aunque la foto de referencia lo sugiera: en prompt_imagen escribe su edad adulta y ropa casual de adulto.
 - Sin desnudos, sin sangre, sin heridas visibles, sin violencia gráfica (riesgo de restricción de edad y desmonetización).
 - Las armas pueden aparecer como amenaza, nunca disparando ni con víctimas heridas.
 - No usar nombres de personas reales en títulos.

@@ -149,3 +149,16 @@ CREATE TABLE IF NOT EXISTS actor_caras (
 CREATE INDEX IF NOT EXISTS actor_caras_actor_idx ON actor_caras (actor_id, calidad DESC);
 ALTER TABLE actores ADD COLUMN IF NOT EXISTS auto boolean NOT NULL DEFAULT false; -- creado por Gancho, falta ponerle nombre
 ALTER TABLE canales ALTER COLUMN modelo SET DEFAULT 'pro';
+
+-- Videos de otros canales para la vista previa "Así se ve en YouTube".
+CREATE TABLE IF NOT EXISTS competencia (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  video_id   text NOT NULL UNIQUE,
+  titulo     text NOT NULL,
+  autor      text NOT NULL DEFAULT '',
+  vistas     bigint,
+  publicado  timestamptz,
+  creado_por text,
+  creado     timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE competencia ADD COLUMN IF NOT EXISTS duracion text;

@@ -17,6 +17,7 @@ import { interpretar, PLANTILLA, normal } from "./lotes.js";
 import * as ia from "./ai/claude.js";
 import { transcripcionDisponible } from "./transcribir.js";
 import * as biblioteca from "./biblioteca.js";
+import { leerLinks, apiDisponible as youtubeApi, buscar as buscarYouTube, tendencias as tendenciasYouTube } from "./competencia.js";
 import fs from "node:fs";
 import os from "node:os";
 import crypto from "node:crypto";
@@ -575,6 +576,38 @@ export function crearApp() {
   }));
 
   // ---------- Administración ----------
+  // ---------- Competencia (vista previa "Así se ve en YouTube") ----------
+  app.get("/api/competencia", envolver(async (req, res) => {
+    const videos = await all("SELECT id, video_id, titulo, autor, vistas, publicado, duracion FROM competencia ORDER BY coalesce(publicado, creado) DESC LIMIT 80");
+    // Si hay pocos, se completa con portadas de otros episodios de Gancho.
+    const propias = await all(`SELECT coalesce(p.imagen->>'mini', p.imagen->>'key') AS key, p.data->>'titulo' AS titulo, e.canal
+      FROM propuestas p JOIN episodios e ON e.id = p.episodio_id
+      WHERE NOT p.archivada AND p.imagen->>'estado' = 'lista' ORDER BY p.creado DESC LIMIT 24`).catch(() => []);
+    res.json({ videos, propias, youtubeApi: youtubeApi() });
+  }));
+  // Con YOUTUBE_API_KEY: lo que sale al buscar un tema, o lo que es tendencia en México.
+  app.get("/api/competencia/youtube", envolver(async (req, res) => {
+    if (!youtubeApi()) throw publico("Falta YOUTUBE_API_KEY en el servidor.", 400);
+    const texto = limpiar(req.query.q, 100);
+    res.json({ videos: texto ? await buscarYouTube(texto) : await tendenciasYouTube() });
+  }));
+  app.post("/api/competencia", envolver(async (req, res) => {
+    const { videos, fallidos } = await leerLinks(req.body?.links);
+    if (!videos.length) throw publico(fallidos.length ? "No pude leer esos links. Pega links de videos o de canales de YouTube." : "Pega al menos un link.");
+    let agregados = 0;
+    for (const v of videos) {
+      const r = await q(`INSERT INTO competencia (video_id, titulo, autor, vistas, publicado, duracion, creado_por) VALUES ($1,$2,$3,$4,$5,$6,$7)
+        ON CONFLICT (video_id) DO UPDATE SET titulo = excluded.titulo, vistas = coalesce(excluded.vistas, competencia.vistas), duracion = coalesce(excluded.duracion, competencia.duracion)`,
+        [v.video_id, v.titulo, v.autor, v.vistas, v.publicado, v.duracion, req.usuario]);
+      agregados += r.rowCount;
+    }
+    res.json({ agregados, fallidos });
+  }));
+  app.delete("/api/competencia", envolver(async (req, res) => {
+    await q("DELETE FROM competencia WHERE id = $1", [uuid(req.body?.id)]);
+    res.json({ ok: true });
+  }));
+
   app.get("/api/canales", envolver(async (req, res) => {
     const cs = await repo.canales();
     res.json(req.user.rol === "admin" ? cs : cs.map(({ webhook_url, ...c }) => ({ ...c, webhook_url: webhook_url ? "configurado" : null })));

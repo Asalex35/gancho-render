@@ -584,6 +584,7 @@ function tarjeta(p, x, i, recargar) {
             .map(([k, v]) => h("div", { class: "bar" }, h("span", {}, k), h("i", { style: { "--v": v } }), h("span", {}, v)))))),
       h("div", {}, h("div", { class: "eyebrow", style: { marginBottom: "6px" } }, "Por qué va a funcionar"), h("ul", { class: "why" }, razones.slice(0, 3).map((r) => h("li", {}, r)))),
       x.errorRehacer ? h("div", { class: "probs" }, x.errorRehacer) : null,
+      img.estado === "lista" ? h("button", { class: "btn ghost full", type: "button", onclick: () => vistaYouTube(p, x).catch((e) => toast(e.message, true)) }, "▶ Ver cómo se ve en YouTube") : null,
       h("div", { class: "acciones" },
         h("button", { class: `btn ${elegida ? "" : "primary"} full`, type: "button", disabled: img.estado !== "lista" || OCUPADA(x) || p.eligiendo,
           onclick: async (e) => { const b = e.currentTarget; b.disabled = true; try { await api(`/api/propuestas/${x.id}/elegir`, { method: "POST" }); recargar(); } catch (er) { toast(er.message, true); b.disabled = false; } } },
@@ -595,6 +596,116 @@ function tarjeta(p, x, i, recargar) {
           ev?.problemas?.length ? h("div", { class: "risk" }, h("b", {}, "Para mejorar: "), ev.problemas.slice(0, 2).join(" · ")) : null,
           h("div", { class: "risk" }, h("b", {}, "Riesgo: "), x.riesgo),
           h("div", { class: "row", style: { gap: "6px" } }, h("span", { class: "tag" }, x.composicion), h("span", { class: "tag" }, `Fórmula ${x.formula}`))))));
+}
+
+// ================= Vista previa: así se ve en YouTube =================
+const fmtVistas = (n) => (n == null ? "" : n >= 1e6 ? `${(n / 1e6).toFixed(1).replace(".0", "")} M de vistas` : n >= 1e3 ? `${Math.round(n / 1e3)} k vistas` : `${n} vistas`);
+function haceCuanto(iso) {
+  if (!iso) return "";
+  const d = (Date.now() - new Date(iso)) / 864e5;
+  return d < 1 ? `hace ${Math.max(1, Math.round(d * 24))} horas` : d < 30 ? `hace ${Math.round(d)} días` : d < 365 ? `hace ${Math.round(d / 30)} meses` : `hace ${Math.round(d / 365)} años`;
+}
+const duracionTxt = (min) => (!min ? "" : min >= 60 ? `${Math.floor(min / 60)}:${String(min % 60).padStart(2, "0")}:00` : `${min}:00`);
+const ytImg = (id, grande) => `https://i.ytimg.com/vi/${id}/${grande ? "hqdefault" : "mqdefault"}.jpg`;
+let compCache = null;
+
+async function vistaYouTube(p, x) {
+  const cargar = async () => (compCache = await api("/api/competencia").catch(() => ({ videos: [], propias: [] })));
+  if (!compCache) await cargar();
+  const mia = { mia: true, src: media(x.imagen.key), titulo: x.titulo, autor: canalNombre(p.canal), meta: "Sin publicar", dur: duracionTxt(p.brief?.duracion_min) };
+  const aTarjeta = (v) => ({ src: ytImg(v.video_id), grande: ytImg(v.video_id, true), titulo: v.titulo, autor: v.autor, dur: v.duracion || "", meta: [fmtVistas(v.vistas), haceCuanto(v.publicado)].filter(Boolean).join(" • ") });
+  let fuente = "guardada", externos = null, busqueda = x.titulo.split(/\s+/).slice(0, 5).join(" ");
+  const otros = () => fuente !== "guardada" && externos?.length ? externos.map(aTarjeta) : [
+    ...compCache.videos.map(aTarjeta),
+    ...compCache.propias.filter((o) => ![x.imagen.key, x.imagen.mini].includes(o.key)).map((o) => ({ src: media(o.key), titulo: o.titulo, autor: canalNombre(o.canal), meta: "Portada de Gancho" })),
+  ];
+  let modo = local.get("yt-modo") || "pc", oscuro = local.get("yt-oscuro") ?? true, resaltar = false, semilla = 0;
+
+  // n tarjetas: la portada propia en una posición realista y el resto de la competencia.
+  const lista = (n, desfase = 0) => {
+    const o = otros(), out = [];
+    for (let i = 0; out.length < n - 1; i++) out.push(o.length ? o[(i + desfase + semilla * 3) % o.length] : { vacio: true });
+    out.splice(Math.min([1, 4, 2, 6][semilla % 4], n - 1), 0, mia);
+    return out;
+  };
+  const soloOtros = (n, desfase) => { const o = otros(); return Array.from({ length: n }, (_, i) => (o.length ? o[(i + desfase + semilla * 3) % o.length] : { vacio: true })); };
+  const avatar = (nombre) => h("div", { class: "yt-av", style: { "--h": [...String(nombre)].reduce((a, c) => a + c.charCodeAt(0), 0) % 360 } }, String(nombre || "?").trim().charAt(0).toUpperCase());
+  const miniatura = (it, grande) => h("div", { class: "yt-th" },
+    it.vacio ? null : h("img", { src: grande && it.grande ? it.grande : it.src, alt: "", loading: "lazy", onerror: (e) => { if (it.grande && e.target.src !== it.src) e.target.src = it.src; } }),
+    it.dur ? h("span", { class: "yt-dur" }, it.dur) : null);
+  const clase = (it, base) => `${base}${it.mia ? " yt-mia" : ""}${it.mia && resaltar ? " resalta" : ""}`;
+  const tarjetaGrande = (it) => h("div", { class: clase(it, "yt-card") }, miniatura(it),
+    h("div", { class: "yt-info" }, avatar(it.autor), h("div", {}, h("div", { class: "yt-t" }, it.titulo || ""), h("div", { class: "yt-m" }, it.autor || ""), h("div", { class: "yt-m" }, it.meta || ""))));
+  const tarjetaCompacta = (it) => h("div", { class: clase(it, "yt-comp") }, miniatura(it),
+    h("div", {}, h("div", { class: "yt-t" }, it.titulo || ""), h("div", { class: "yt-m" }, it.autor || ""), h("div", { class: "yt-m" }, it.meta || "")));
+  const tarjetaTV = (it) => h("div", { class: clase(it, "yt-tvc") + (it.mia ? " foco" : "") }, miniatura(it, true),
+    h("div", { class: "yt-t" }, it.titulo || ""), h("div", { class: "yt-m" }, [it.autor, it.meta].filter(Boolean).join(" • ")));
+
+  const pantallas = {
+    pc: () => h("div", { class: "yt-pc" },
+      h("div", { class: "yt-top" }, h("b", { class: "yt-logo" }, "▶ YouTube"), h("div", { class: "yt-search" }, "Buscar")),
+      h("div", { class: "yt-chips" }, ["Todos", "Telenovelas", "Drama", "Mixes", "Videos nuevos para ti"].map((c, i) => h("span", { class: i ? "" : "on" }, c))),
+      h("div", { class: "yt-grid" }, lista(8).map(tarjetaGrande)),
+      h("div", { class: "yt-sub" }, "Al lado de otro video · aquí la portada se ve de 168 × 94 px"),
+      h("div", { class: "yt-watch" }, h("div", { class: "yt-player" }, "▶"), h("div", { class: "yt-side" }, lista(5, 7).map(tarjetaCompacta)))),
+    cel: () => h("div", { class: "yt-cels" },
+      h("div", { class: "yt-tel" }, h("div", { class: "yt-tel-top" }, h("b", { class: "yt-logo" }, "▶ YouTube")), h("div", { class: "yt-tel-feed" }, lista(4).map(tarjetaGrande)), h("div", { class: "yt-pie" }, "Inicio")),
+      h("div", { class: "yt-tel" }, h("div", { class: "yt-tel-top" }, h("div", { class: "yt-search" }, fuente === "busqueda" ? busqueda : "telenovelas")), h("div", { class: "yt-tel-feed lista" }, lista(7, 5).map(tarjetaCompacta)), h("div", { class: "yt-pie" }, "Búsqueda y sugeridos"))),
+    tv: () => h("div", { class: "yt-tv" }, h("div", { class: "yt-tv-pant" },
+      h("div", { class: "yt-tv-menu" }, ["⌂", "⌕", "▤", "☺"].map((s) => h("span", {}, s))),
+      h("div", { class: "yt-tv-cont" },
+        h("div", { class: "yt-tv-row" }, h("div", { class: "yt-sub" }, "Recomendados"), h("div", { class: "yt-tv-fila" }, lista(4).map(tarjetaTV))),
+        h("div", { class: "yt-tv-row" }, h("div", { class: "yt-sub" }, "Telenovelas y drama"), h("div", { class: "yt-tv-fila" }, soloOtros(4, 9).map(tarjetaTV)))))),
+  };
+
+  const escenario = h("div", {});
+  const links = h("textarea", { rows: 2, placeholder: "Pega links de canales o videos (ej. youtube.com/@CuandoLosAngelesCaen)" });
+  const pintar = () => {
+    escenario.replaceChildren(h("div", { class: `yt ${oscuro ? "yt-dark" : "yt-light"}` }, pantallas[modo]()));
+  };
+  const controles = h("div", { class: "row", style: { justifyContent: "space-between" } },
+    seg({ pc: "Computadora", cel: "Celular", tv: "Televisión" }, modo, (v) => { modo = v; local.set("yt-modo", v); pintar(); }),
+    h("div", { class: "row", style: { gap: "6px" } },
+      seg({ oscuro: "Oscuro", claro: "Claro" }, oscuro ? "oscuro" : "claro", (v) => { oscuro = v === "oscuro"; local.set("yt-oscuro", oscuro); pintar(); }),
+      h("button", { class: "btn small", type: "button", onclick: (e) => { resaltar = !resaltar; e.currentTarget.classList.toggle("primary", resaltar); pintar(); } }, "Resaltar la mía"),
+      h("button", { class: "btn small", type: "button", onclick: () => { semilla++; pintar(); } }, "Mover de lugar")));
+  // Con YOUTUBE_API_KEY: rodear la portada con lo que es tendencia o con lo que sale al buscar el tema.
+  const caja = h("input", { value: busqueda, placeholder: "¿Qué buscaría la gente?", style: { maxWidth: "320px" } });
+  const traer = async () => {
+    if (fuente === "guardada") { externos = null; return pintar(); }
+    try {
+      busqueda = caja.value.trim() || busqueda;
+      externos = (await api(`/api/competencia/youtube${fuente === "busqueda" ? `?q=${encodeURIComponent(busqueda)}` : ""}`)).videos;
+      pintar();
+    } catch (er) { toast(er.message, true); }
+  };
+  const fuentes = compCache.youtubeApi
+    ? h("div", { class: "row", style: { gap: "6px" } },
+        seg({ guardada: "Mi competencia", tendencias: "Tendencias MX", busqueda: "Búsqueda" }, fuente, (v) => { fuente = v; caja.hidden = v !== "busqueda"; buscarBtn.hidden = v !== "busqueda"; traer(); }),
+        caja, null)
+    : h("span", { class: "muted", style: { fontSize: ".8rem" } }, "Con la API de YouTube también puedes ver tu portada junto a tendencias y búsquedas reales.");
+  const buscarBtn = h("button", { class: "btn small", type: "button", onclick: traer }, "Buscar");
+  if (compCache.youtubeApi) { fuentes.append(buscarBtn); caja.hidden = true; buscarBtn.hidden = true; caja.addEventListener("keydown", (e) => { if (e.key === "Enter") traer(); }); }
+  const nComp = h("span", { class: "muted" });
+  const contar = () => { nComp.textContent = compCache.videos.length ? `${compCache.videos.length} videos de otros canales` : "Todavía no hay videos de otros canales: pega los links de la competencia."; };
+  contar();
+  const agregar = h("button", { class: "btn small", type: "button", onclick: async (e) => {
+    const b = e.currentTarget; b.disabled = true; b.textContent = "Trayendo videos…";
+    try {
+      const r = await api("/api/competencia", { method: "POST", body: { links: links.value } });
+      await cargar(); contar(); pintar(); links.value = "";
+      toast(r.fallidos.length ? `Listo. No pude leer: ${r.fallidos.join(", ")}` : "Listo, ya salen en la vista previa", Boolean(r.fallidos.length));
+    } catch (er) { toast(er.message, true); }
+    b.disabled = false; b.textContent = "Agregar";
+  } }, "Agregar");
+  const problemas = x.evaluacion?.problemas?.length ? h("div", { class: "risk" }, h("b", {}, "Lo que vio Gancho a tamaño chico: "), x.evaluacion.problemas.slice(0, 2).join(" · ")) : null;
+
+  pintar();
+  abrirModal(h("h2", {}, "Así se ve en YouTube"), controles, fuentes, escenario, problemas,
+    h("details", {}, h("summary", { class: "eyebrow", style: { cursor: "pointer" } }, "Portadas de otros canales"),
+      h("div", { class: "stack", style: { gap: "8px", marginTop: "10px" } }, nComp, links, h("div", {}, agregar))),
+    h("div", { class: "foot" }, h("button", { class: "btn", type: "button", onclick: cerrarModal }, "Cerrar")));
+  modal.classList.add("yt-ancho");
 }
 
 function rehacer(x, recargar) {

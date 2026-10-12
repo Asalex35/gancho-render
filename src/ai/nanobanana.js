@@ -73,11 +73,12 @@ async function imagenDePrueba(texto) {
 
 // Para mostrar en pantalla: nunca bloquea más de 5 s y recuerda también las fallas por 30 s.
 let cacheCreditos = { v: null, t: 0 };
-export async function creditos() {
-  if (Date.now() - cacheCreditos.t < 30e3) return cacheCreditos.v;
+// Para decidir si se gasta (p. ej. repintar): { espera: 15000, fresco: true }.
+export async function creditos({ espera = 5000, fresco = false } = {}) {
+  if (!fresco && Date.now() - cacheCreditos.t < 30e3) return cacheCreditos.v;
   let v = null;
   try {
-    const res = await fetch(`${BASE}/common/credit`, { headers: { Authorization: `Bearer ${config.nanoBananaKey}` }, signal: AbortSignal.timeout(5000) });
+    const res = await fetch(`${BASE}/common/credit`, { headers: { Authorization: `Bearer ${config.nanoBananaKey}` }, signal: AbortSignal.timeout(espera) });
     const body = await res.json();
     if (body.code === 200) v = body.data;
   } catch {}
