@@ -17,7 +17,7 @@ services:
     disk:
       name: gancho-datos
       mountPath: /var/data
-      sizeGB: 50              # videos 4K pesan mucho; se borran solos a los VIDEO_RETENTION_DAYS
+      sizeGB: 20              # para pruebas; súbelo si suben muchos videos 4K (se borran solos a los VIDEO_RETENTION_DAYS)
     envVars:
       - key: NODE_ENV
         value: production
@@ -56,4 +56,6 @@ services:
       - key: GOOGLE_API_KEY
         sync: false
       - key: FAL_KEY
+        sync: false
+      - key: YOUTUBE_API_KEY
         sync: false
