@@ -1,5 +1,8 @@
 # Cambios de Gancho
 
+## 0.4.6 — 2026-10-12
+- Fotos de actores con la cara chica (cuerpo completo, grupo): si no aparece una cara, Gancho la busca con zoom en partes de la foto.
+
 ## 0.4.5 — 2026-10-12
 - **Arreglo de parecido**: el detector descartaba la cara de fotos de actores retocadas o en 3/4 (filtro de nitidez pensado para video). Las fotos oficiales ahora usan filtros suaves; sin esto el actor se quedaba sin cara de referencia y sin medición de parecido.
 - La medición de parecido en la portada también acepta la piel lisa de las imágenes de IA.

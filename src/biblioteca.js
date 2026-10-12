@@ -1,6 +1,7 @@
 // Biblioteca de rostros por actor: cada actor junta sus mejores caras (de sus fotos y de cada episodio).
 // Sirve para (1) reconocer al actor en un video nuevo, (2) dar mejores referencias a Nano Banana
 // y (3) medir qué tanto se parece la portada al actor real.
+import sharp from "sharp";
 import { q, one, all } from "./db.js";
 import * as storage from "./storage.js";
 import * as caras from "./caras.js";
@@ -11,10 +12,21 @@ export const RECONOCER = 0.45; // similitud mínima para decir "es este actor"
 // Cara principal de una foto subida a la biblioteca (una por foto).
 export async function procesarFoto(actorId, fotoKey) {
   if (await one("SELECT 1 FROM actor_caras WHERE actor_id = $1 AND foto_key = $2", [actorId, fotoKey])) return;
-  const buf = await storage.leer(fotoKey);
+  let buf = await storage.leer(fotoKey);
   // Foto oficial del actor: filtros suaves (una foto retocada o en 3/4 sigue siendo buena referencia).
-  const utiles = await caras.analizarCuadro(buf, { minArea: 0.0008, minScore: 0.6, maxGiro: 0.75, minNitidez: 2 });
-  const c = utiles.sort((a, b) => b.cara.area - a.cara.area)[0];
+  const opc = { minArea: 0.0008, minScore: 0.6, maxGiro: 0.75, minNitidez: 2 };
+  let c = (await caras.analizarCuadro(buf, opc)).sort((a, b) => b.cara.area - a.cara.area)[0];
+  // Cara chica en una foto grande (cuerpo completo, grupo): se busca de nuevo con zoom en partes de la foto.
+  if (!c) {
+    const { width: W, height: H } = await sharp(buf).metadata();
+    const t = 0.6, zonas = [[0.2, 0.05], [0, 0], [0.4, 0], [0, 0.4], [0.4, 0.4], [0.2, 0.2]];
+    for (const [x, y] of zonas) {
+      const parte = await sharp(buf).extract({ left: Math.round(W * x), top: Math.round(H * y), width: Math.round(W * t), height: Math.round(H * t) })
+        .resize({ width: 1600, height: 1600, fit: "inside" }).jpeg({ quality: 92 }).toBuffer();
+      c = (await caras.analizarCuadro(parte, opc)).sort((a, b) => b.cara.area - a.cara.area)[0];
+      if (c) { buf = parte; break; }
+    }
+  }
   if (!c) { console.warn(`Biblioteca: no encontré una cara clara en la foto ${fotoKey} (actor ${actorId}). Sube una foto de frente.`); return false; }
   const { rostro } = await caras.recortes(buf, c.cara);
   const key = await storage.guardar("rostros", rostro, "jpg");
