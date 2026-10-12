@@ -1,5 +1,10 @@
 # Cambios de Gancho
 
+## 0.4.1 — 2026-10-12
+- **Títulos y propuestas con Claude Sonnet** (Haiku sigue para descripción, tags y revisión): con Haiku los títulos salían narrativos.
+- **Reglas duras de título**: no describir la portada ni contar la historia, sin edades ni nombres propios (solo arquetipos), 45–70 caracteres, un solo giro.
+- La voz de CLAC se actualizó a arquetipos (solo si no se había editado a mano).
+
 ## 0.4.0 — 2026-10-12
 - **Hacks** (varios episodios en un video): al subirlo se marca "Es un hack". Gancho encuentra dónde termina el 1er episodio (pantalla negra + silencio, o el minuto que escriba el equipo) y saca transcripción, cuadros, caras y subtítulos solo de ese episodio. Portada y título son solo de la primera historia.
 - **Transcripción**: máximo 25 min por episodio (antes 40): inicio, medio y final.

@@ -162,3 +162,6 @@ CREATE TABLE IF NOT EXISTS competencia (
   creado     timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE competencia ADD COLUMN IF NOT EXISTS duracion text;
+
+-- 2026-10-12: la voz de CLAC ya no usa edades ni nombres (solo si no se editó a mano).
+UPDATE canales SET voz = 'Tercera persona. Arquetipo social (millonario, mesera, payaso, suegra, novia) + una acción tabú + cierre abierto (''sin imaginar'', ''y así reaccionó'', ''su vida cambió para siempre''). Sin edades ni nombres.' WHERE id = 'CLAC' AND voz = 'Tercera persona. Etiqueta social + edad o nombre propio. Cierre con ''sin imaginar'' / ''sin saber''.';

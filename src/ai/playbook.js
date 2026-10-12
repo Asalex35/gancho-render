@@ -8,7 +8,7 @@ export const CANALES_SEMILLA = {
     nombre: "Cuando Los Ángeles Caen",
     idioma: "es",
     pais: "México",
-    voz: "Tercera persona. Etiqueta social + edad o nombre propio. Cierre con 'sin imaginar' / 'sin saber'.",
+    voz: "Tercera persona. Arquetipo social (millonario, mesera, payaso, suegra, novia) + una acción tabú + cierre abierto ('sin imaginar', 'y así reaccionó', 'su vida cambió para siempre'). Sin edades ni nombres.",
     descripcionFija:
       "No todos los ángeles tienen alas. A veces, son personas comunes en momentos extraordinarios. Cuando los ángeles caen te presenta las historias de quienes vieron su vida transformada por un acto de bondad casi milagroso.\nUna serie que te tocará el alma. Mírala por Multimedios, Canal 6.",
     disclaimer:
@@ -49,8 +49,17 @@ B) Karma de clase: [nombre] + "lo/la dejó por pobre" + "sin saber que" + "se ha
 C) Reacción o venganza: [personaje] + [descubre / sufre una ofensa] + "y así reaccionó" / "hizo ESTO".
 D) Confesión en primera persona: "Mi" + [familiar] + [traición doble] + [momento exacto de máximo daño].
 
-Ingredientes: etiqueta social + edad o nombre (suena a caso real); un tabú cotidiano (edad, infidelidad, traición familiar, dinero vs amor);
-el final siempre oculto; escenario de alto riesgo (boda, funeral, hospital); 45–90 caracteres; sin emojis; mayúsculas en máximo una palabra.
+## Reglas duras de título (2026, mandan sobre los ejemplos de arriba)
+- El título NO describe la portada ni cuenta la historia: plantea UNA tensión y se calla lo importante. La portada muestra; el título provoca.
+  Mal: "Yosuani, con vestido de novia, supo la traición en su boda y así reaccionó" (narra lo que ya se ve).
+  Bien: "Novia descubre la traición en pleno altar y hace algo que nadie esperaba".
+- Sin edades ("de 58 años") y sin nombres propios de personajes ni de actores. Usa arquetipos: madre, suegra, novia, millonario, enfermero, mesera.
+- Un solo giro por título, 45–70 caracteres. Verbos de acción en presente o pasado simple.
+- Títulos actuales de CLAC que funcionan: "Payaso descubre a su esposa con otro y decide darle una lección",
+  "Millonario salvó a una mesera inmigrante y su vida cambió para siempre", "Millonario convierte a una vagabunda en super modelo".
+
+Ingredientes: arquetipo social (suena a caso real); un tabú cotidiano (edad, infidelidad, traición familiar, dinero vs amor);
+el final siempre oculto; escenario de alto riesgo (boda, funeral, hospital); 45–70 caracteres; sin emojis; mayúsculas en máximo una palabra.
 
 ## Portada
 - SIN TEXTO. El título explica la portada y la portada congela el momento del título. Nunca repiten la misma información.
