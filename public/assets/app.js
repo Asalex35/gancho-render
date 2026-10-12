@@ -490,6 +490,11 @@ function pintarEpisodio(p) {
       h("button", { class: "btn ghost danger", type: "button", onclick: () => confirmar("¿Borrar este episodio?", "Se borran las portadas y versiones. No se puede deshacer.",
         async () => { await api(`/api/episodios/${p.id}`, { method: "DELETE" }); location.hash = p.lote_id ? `#/lote/${p.lote_id}` : "#/"; }, "Sí, borrar") }, "Borrar")))];
 
+  // Personajes sin actor con foto: Nano Banana los inventa y no se van a parecer.
+  const sinFoto = (p.cast || []).filter((c) => !c.tieneFotos).map((c) => c.personaje);
+  if (sinFoto.length && !pensando && p.estado !== "procesando") partes.push(h("div", { class: "probs", style: { marginBottom: "16px" } },
+    h("b", {}, `Sin foto de actor: ${sinFoto.join(", ")}. `), "Gancho los inventa, así que no se van a parecer. ",
+    h("a", { href: `#/ep/${p.id}/editar`, style: { color: "inherit", fontWeight: 600 } }, "Asignar actores")));
   if (p.estado === "procesando") {
     partes.push(h("div", { class: "vacio" }, h("div", { class: "spin" }), h("h2", {}, "Gancho está viendo el episodio"), pasosVideo(p.video?.etapa),
       h("p", { class: "muted", style: { margin: 0 } }, "Saca cuadros, escucha el audio y escribe la historia. Un episodio de 40 min tarda unos minutos.")));
@@ -572,6 +577,9 @@ function tarjeta(p, x, i, recargar) {
       h("div", { class: "row", style: { gap: "6px" } }, h("span", { class: "tag" }, `Opción ${i + 1}`), x.version > 1 ? h("span", { class: "tag" }, `v${x.version}`) : null,
         caras ? h("span", { class: `tag ${caras[1]}` }, caras[0]) : null, ...parecido, x.editadoAMano ? h("span", { class: "tag" }, "Título editado") : null,
         x.propia ? h("span", { class: "tag", title: "Subida por el equipo" }, "Hecha por el equipo") : null,
+        // Qué actores se pintaron con su foto real y cuáles se inventaron (sin foto en Actores).
+        img.conFoto && !img.conFoto.length && !x.propia ? h("span", { class: "tag bad", title: "Asigna actores con foto en Editar historia y cast" }, "Sin fotos de actores") : null,
+        ...(img.sinFoto || []).map((n) => h("span", { class: "tag warn", title: "Este personaje no tiene actor con foto: Nano Banana lo inventa" }, `${n}: sin foto`)),
         img.proveedor && !["nanobanana", "manual"].includes(img.proveedor) ? h("span", { class: "tag warn", title: "Nano Banana falló y se usó el respaldo" }, `Hecha con ${{ google: "Google", fal: "Seedream" }[img.proveedor] || img.proveedor}`) : null),
       h("div", { class: "stack", style: { gap: "4px" } }, x.rehaciendo === "titulo" ? h("div", { class: "row muted" }, h("div", { class: "spin" }), "Rehaciendo el título…") : titulo,
         x.traduccion ? h("span", { class: "trad" }, `En español: ${x.traduccion}`) : null, cuenta),

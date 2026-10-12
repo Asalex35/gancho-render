@@ -1,6 +1,6 @@
 {
   "name": "gancho",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "private": true,
   "description": "Gancho by Prismáticoos: portadas, títulos, descripción y tags para YouTube",
   "type": "module",

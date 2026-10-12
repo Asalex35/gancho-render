@@ -51,7 +51,8 @@ export function publicarEpisodio(ep) {
     video,
     propuestas: (ep.propuestas || []).map((p) => ({
       id: p.id, slot: p.slot, version: p.version, ...p.data,
-      imagen: { estado: p.imagen.estado, key: p.imagen.key, mini: p.imagen.mini, error: p.imagen.error, inicio: p.imagen.inicio, intentos: p.imagen.intentos, proveedor: p.imagen.proveedor },
+      imagen: { estado: p.imagen.estado, key: p.imagen.key, mini: p.imagen.mini, error: p.imagen.error, inicio: p.imagen.inicio, intentos: p.imagen.intentos, proveedor: p.imagen.proveedor,
+        conFoto: p.imagen.conFoto || null, sinFoto: p.imagen.sinFoto || null },
       evaluacion: p.evaluacion, evaluando: p.evaluando, rehaciendo: p.rehaciendo, errorRehacer: p.error_rehacer,
       editadoAMano: p.editado, autoReintento: p.imagen.autoReintento || null, nVersiones: p.n_versiones || 0,
     })),

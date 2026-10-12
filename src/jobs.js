@@ -168,7 +168,7 @@ async function referencias(ep, data, { conEscena = true } = {}) {
 function unaCara(refs, personajes) {
   const conCara = refs.filter((r) => !r.escena).map((r) => r.personaje);
   const sinCara = personajes.filter((p) => !conCara.some((c) => ia.mismoPersonaje(c, p)));
-  return `EACH REFERENCE FACE BELONGS TO EXACTLY ONE PERSON (${conCara.join(", ")}). Never reuse, mirror or blend a reference face on anyone else.` +
+  return `Each reference face is used for exactly one person: the character it belongs to (${conCara.join(", ")}). Nobody else in the image may share those faces.` +
     (sinCara.length ? ` ${sinCara.join(", ")} ${sinCara.length > 1 ? "are different people" : "is a different person"}: clearly different face, hair color and hairstyle, age and build.` : "") +
     " Background extras must also look clearly different from the reference actors.";
 }
@@ -215,6 +215,10 @@ async function hImagen({ propuestaId, usuario, extra, prioridad, evitar = [], co
   try {
     const ep = await repo.episodio(p.episodio_id);
     const refs = await referencias(ep, p.data);
+    // Qué actores van con foto y quién no (se muestra en la tarjeta y en los registros).
+    const conFoto = refs.filter((r) => !r.escena).map((r) => ({ personaje: r.personaje, n: r.fotos.length }));
+    const sinFoto = (p.data.personajes_en_portada || []).filter((n) => !conFoto.some((c) => ia.mismoPersonaje(c.personaje, n)));
+    console.log(`[imagen] ${propuestaId.slice(0, 8)} con foto: ${conFoto.map((c) => `${c.personaje}(${c.n})`).join(", ") || "nadie"} · sin foto: ${sinFoto.join(", ") || "nadie"}`);
     const prompt = promptConReferencias(p.data.prompt_imagen, refs, extra, p.data.personajes_en_portada || []);
     const r = await imagen.generar({
       prompt, refs: await prepararRefs(refs), modelo: ep.modelo, evitar,
@@ -224,7 +228,7 @@ async function hImagen({ propuestaId, usuario, extra, prioridad, evitar = [], co
     const intentos = (p.imagen.intentos || 0) + 1;
     const taskId = r.taskId || `${r.proveedor}_${inicio}`;
     const { rowCount } = await q(`UPDATE propuestas SET imagen = imagen || $2::jsonb WHERE ${MIO}`, [propuestaId,
-      { taskId, proveedor: r.proveedor, intentos, conReferencias: refs.length > 0, evitar }]);
+      { taskId, proveedor: r.proveedor, intentos, conReferencias: refs.length > 0, conFoto, sinFoto, evitar }]);
     if (cobrar) await repo.sumarUso(usuario, "imagenes").catch(() => {});
     if (!rowCount) return; // la propuesta cambió mientras se pintaba: se descarta este resultado
     if (r.taskId) {
@@ -280,7 +284,7 @@ async function aRespaldo({ propuestaId, taskId, prioridad, evitar = [] }, motivo
   const r = await q(`UPDATE propuestas SET imagen = imagen || '{"estado":"en_cola","taskId":null}'::jsonb
     WHERE id = $1 AND imagen->>'estado' = 'generando' AND imagen->>'taskId' = $2`, [propuestaId, taskId]);
   if (!r.rowCount) return;
-  const p = await repo.propuesta(propuestaId);
+  const p = await repo.propuesta(propuestaId); if (!p) return; // se borró (episodio eliminado o archivado)
   imagen.registrarFalla("nanobanana");
   await enviar("imagen", { propuestaId, usuario: p.imagen.usuario, prioridad, evitar: [...evitar, "nanobanana"], cobrar: true }, { prioridad });
 }
@@ -307,7 +311,7 @@ async function guardarResultado(propuestaId, taskId, buf, prioridad) {
   const { rowCount } = await q(`UPDATE propuestas SET imagen = imagen || $3::jsonb WHERE id = $1 AND imagen->>'taskId' = $2 AND imagen->>'estado' = 'generando' AND NOT archivada`,
     [propuestaId, taskId, { estado: "lista", key, mini, error: null, luz: luz ? { antes: luz.antes, despues: luz.despues } : null }]);
   if (!rowCount) { await storage.borrar(key); await storage.borrar(mini); return; }
-  const p = await repo.propuesta(propuestaId);
+  const p = await repo.propuesta(propuestaId); if (!p) return; // se borró (episodio eliminado o archivado)
   await repo.tocarEpisodio(p.episodio_id);
   await enviar("evaluar", { propuestaId, key, prioridad }, { prioridad });
 }
@@ -344,6 +348,7 @@ async function hEvaluar({ propuestaId, key, prioridad, sinReintento }) {
   let ev;
   try {
     const p = await repo.propuesta(propuestaId);
+    if (!p) return;
     const ep = await repo.episodio(p.episodio_id);
     const b64 = async (k) => ({ base64: (await paraClaude(await storage.leer(k))).toString("base64"), mime: "image/jpeg" });
     const refs = await Promise.all((await referencias(ep, p.data, { conEscena: false })).map(async (r) => ({ personaje: r.personaje, ...(await b64(r.fotos[0])) })));
@@ -374,7 +379,7 @@ async function hEvaluar({ propuestaId, key, prioridad, sinReintento }) {
   } finally {
     if (!ev) await q("UPDATE propuestas SET evaluando = false WHERE id = $1", [propuestaId]);
   }
-  const p = await repo.propuesta(propuestaId);
+  const p = await repo.propuesta(propuestaId); if (!p) return; // se borró (episodio eliminado o archivado)
   const ep = await one("SELECT elegida, eligiendo FROM episodios WHERE id = $1", [p.episodio_id]);
   // No se repinta sola si el usuario solo cambió el título, ni si ya está elegida o se está eligiendo.
   const reintentar = !ev.aprobada && (p.imagen.intentos || 1) < 2 && !sinReintento && ep.elegida !== propuestaId && !ep.eligiendo

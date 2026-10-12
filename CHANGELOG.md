@@ -1,5 +1,11 @@
 # Cambios de Gancho
 
+## 0.4.4 — 2026-10-12
+- Cada portada muestra qué personajes se pintaron sin foto de actor ("Prima: sin foto") y el episodio avisa arriba qué personajes no tienen actor con foto, con enlace para asignarlos.
+- Registro por imagen en el servidor: con foto / sin foto.
+- Instrucción de caras reescrita en positivo (cada cara de referencia es de un solo personaje).
+- Los trabajos en segundo plano ya no fallan si la propuesta se borró o archivó mientras se revisaba.
+
 ## 0.4.3 — 2026-10-12
 - **Todos los actores con foto salen en cada portada** (hasta 4): Claude sabe quién tiene foto, y si deja fuera a alguno Gancho lo agrega solo a la escena.
 - Los nombres de personaje se comparan con tolerancia ("La novia" = "Novia"): ningún actor se queda sin su foto de referencia por cómo se escribió su nombre.
