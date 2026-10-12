@@ -140,8 +140,7 @@ async function hPropuestas({ episodioId, usuario, prioridad }) {
 // Referencias: cuadros del propio video (flujo automático) o fotos de la biblioteca de actores,
 // más un cuadro del lugar del momento cumbre si existe.
 async function referencias(ep, data, { conEscena = true } = {}) {
-  const nombres = (data.personajes_en_portada || []).map(normal);
-  const enPortada = (ep.cast || []).filter((c) => nombres.includes(normal(c.personaje)));
+  const enPortada = (ep.cast || []).filter((c) => (data.personajes_en_portada || []).some((n) => ia.mismoPersonaje(n, c.personaje)));
   const escena = conEscena ? (ep.brief.cuadros_momento || []).slice(0, 1) : [];
   // Reparte el cupo de referencias del modelo (Pro: 8, NB2: 14) entre los personajes de la portada.
   const cupo = (nb.MODELOS[ep.modelo]?.maxRefs || 8) - escena.length;
@@ -168,7 +167,7 @@ async function referencias(ep, data, { conEscena = true } = {}) {
 // Sin foto, Nano Banana tiende a copiar la cara del actor de referencia en los demás personajes (dos "Yosuanis").
 function unaCara(refs, personajes) {
   const conCara = refs.filter((r) => !r.escena).map((r) => r.personaje);
-  const sinCara = personajes.filter((p) => !conCara.some((c) => normal(c) === normal(p)));
+  const sinCara = personajes.filter((p) => !conCara.some((c) => ia.mismoPersonaje(c, p)));
   return `EACH REFERENCE FACE BELONGS TO EXACTLY ONE PERSON (${conCara.join(", ")}). Never reuse, mirror or blend a reference face on anyone else.` +
     (sinCara.length ? ` ${sinCara.join(", ")} ${sinCara.length > 1 ? "are different people" : "is a different person"}: clearly different face, hair color and hairstyle, age and build.` : "") +
     " Background extras must also look clearly different from the reference actors.";
@@ -350,10 +349,9 @@ async function hEvaluar({ propuestaId, key, prioridad, sinReintento }) {
     const refs = await Promise.all((await referencias(ep, p.data, { conEscena: false })).map(async (r) => ({ personaje: r.personaje, ...(await b64(r.fotos[0])) })));
     ev = await ia.evaluarPortada({ imagen: await b64(key), propuesta: p.data, referencias: refs });
     // Parecido objetivo: compara las caras de la portada con la huella de cada actor (episodio o biblioteca).
-    const nombres = (p.data.personajes_en_portada || []).map(normal);
     const objetivos = [];
     for (const c of ep.cast || []) {
-      if (!nombres.includes(normal(c.personaje))) continue;
+      if (!(p.data.personajes_en_portada || []).some((n) => ia.mismoPersonaje(n, c.personaje))) continue;
       const h = c.huella || (c.actorId ? await biblioteca.huellaDe(c.actorId) : null);
       if (h) objetivos.push({ personaje: c.personaje, huella: h });
     }

@@ -1,5 +1,10 @@
 # Cambios de Gancho
 
+## 0.4.3 — 2026-10-12
+- **Todos los actores con foto salen en cada portada** (hasta 4): Claude sabe quién tiene foto, y si deja fuera a alguno Gancho lo agrega solo a la escena.
+- Los nombres de personaje se comparan con tolerancia ("La novia" = "Novia"): ningún actor se queda sin su foto de referencia por cómo se escribió su nombre.
+- Hasta 4 personas protagonistas por portada; en "Víctima sola" la víctima va al frente y los demás más chicos atrás.
+
 ## 0.4.2 — 2026-10-12
 - **Sin personajes duplicados**: cada cara de referencia es de un solo personaje; los personajes sin foto llevan rasgos claramente distintos.
 - La revisión automática cuenta cuántas veces aparece la cara del actor: si sale repetida, marca el problema y la repinta sola.

@@ -132,7 +132,7 @@ ESTILO VISUAL DE SUS PORTADAS: ${canal.estilo_visual || "sigue el playbook"}${ej
 function describirEpisodio(ep, canal) {
   const b = ep.brief;
   const cast = (ep.cast || []).map((c) =>
-    `- ${c.personaje} (${c.edad || "edad no indicada"}), rol: ${c.rol}, vestuario: ${c.vestuario || "libre"}, actor: ${c.actorNombre || "sin asignar"}`).join("\n");
+    `- ${c.personaje} (${c.edad || "edad no indicada"}), rol: ${c.rol}, vestuario: ${c.vestuario || "libre"}, actor: ${c.actorNombre || "sin asignar"}${c.tieneFotos ? " · CON FOTO (debe salir)" : ""}`).join("\n");
   return `${describirCanal(canal)}
 
 SINOPSIS: ${b.sinopsis}${b.duracion_min ? `\nDURACIÓN DEL EPISODIO: ${b.duracion_min} min` : ""}
@@ -173,12 +173,28 @@ Cada título usa una fórmula distinta cuando sea posible. Califica con honestid
 En prompt_imagen describe: escena, posición de cada personaje (por nombre), emoción exacta de cada cara, vestuario, objeto clave,
 color saturado, luz, "no text, no letters, no watermark", espacio libre abajo a la izquierda para el logo. Formato 16:9.
 ENCUADRE OBLIGATORIO: plano medio cerrado, las caras principales ocupan al menos un tercio del alto de la imagen,
-máximo 3 personas protagonistas, extras desenfocados al fondo, nada importante en la esquina inferior derecha.
+máximo 4 personas protagonistas, extras desenfocados al fondo, nada importante en la esquina inferior derecha.
+ACTORES CON FOTO: todos los personajes marcados "CON FOTO" salen en CADA una de las 3 portadas (si son más de 4, los 4 más importantes),
+con la cara visible, y van en personajes_en_portada con su nombre EXACTO del cast. En "Víctima sola" la víctima va al frente y los demás más chicos atrás.
 Escribe porque_funciona y riesgo cortos y directos: el equipo los lee rápido.
 PERSONAJES SIN ACTOR (sin foto): en prompt_imagen dales rasgos claramente distintos a los de los actores con foto (otro color y peinado de cabello, otra edad o complexión), para que la imagen no repita la cara del protagonista.
 ANTES DE RESPONDER revisa cada título: si insinúa o menciona algo del DESENLACE (cómo termina, quién regresa, embarazos, castigos, éxitos futuros), reescríbelo.
 IDIOMA: títulos en ${nombreIdioma(canal.idioma)}${canal.idioma !== "es" ? " (y su traducción al español en traduccion)" : ""}; todo lo demás para el equipo en español.`;
-  return llamar({ content, schema: RespuestaPropuestas, effort: "high", creativo: true });
+  const r = await llamar({ content, schema: RespuestaPropuestas, effort: "high", creativo: true });
+  for (const pr of r.propuestas || []) asegurarActores(pr, ep.cast);
+  return r;
+}
+
+// Nombres del cast tal cual; si Claude escribe "La novia" en vez de "Novia", se corrige al nombre exacto.
+const norm = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/^(el|la|los|las)\s+/, "").trim();
+export const mismoPersonaje = (a, b) => { const x = norm(a), y = norm(b); return Boolean(x && y) && (x === y || x.includes(y) || y.includes(x)); };
+export function asegurarActores(propuesta, cast) {
+  const conFoto = (cast || []).filter((c) => c.tieneFotos).slice(0, 4);
+  const nombres = (propuesta.personajes_en_portada || []).map((n) => (cast || []).find((c) => mismoPersonaje(c.personaje, n))?.personaje || n);
+  const faltan = conFoto.filter((c) => !nombres.some((n) => mismoPersonaje(n, c.personaje)));
+  propuesta.personajes_en_portada = [...new Set([...nombres, ...faltan.map((c) => c.personaje)])];
+  if (faltan.length) propuesta.prompt_imagen += `\nALSO INCLUDE in the scene, face clearly visible (secondary position, smaller or behind): ${faltan.map((c) => c.personaje).join(", ")}.`;
+  return propuesta;
 }
 
 export async function rehacerPropuesta(ep, canal, anterior, { objetivo, razones, comentario }, feedback) {
@@ -197,7 +213,7 @@ POR QUÉ NO GUSTÓ: ${[...razones, comentario].filter(Boolean).join("; ") || "si
 TAREA: ${queCambiar} Corrige exactamente lo que el equipo señaló. Mantén el encuadre cerrado (caras grandes).
 Devuelve el gancho y UNA sola propuesta en "propuestas".`;
   const r = await llamar({ content, schema: RespuestaPropuestas, effort: "high", creativo: true });
-  return r.propuestas[0];
+  return asegurarActores(r.propuestas[0], ep.cast);
 }
 
 export async function evaluarPortada({ imagen, propuesta, referencias }) {
