@@ -40,8 +40,8 @@ export async function crearTarea({ modelo = "nb2", prompt, imageUrls = [] }) {
     prompt: prompt.slice(0, 19000),
     imageUrls: imageUrls.slice(0, m.maxRefs),
     aspectRatio: "16:9",
-    // En nanobananaapi.ai, Pro cuesta lo mismo en 1K que en 2K (18 créditos): se pide en 2K.
-    resolution: modelo === "pro" ? (process.env.PRO_RESOLUTION || "2K") : config.imageResolution,
+    // YouTube muestra la portada a 1280x720 como máximo: 1K (1376x768) alcanza y se genera más rápido que 2K o 4K.
+    resolution: modelo === "pro" ? (process.env.PRO_RESOLUTION || "1K") : config.imageResolution,
   };
   if (modelo === "nb2") body.outputFormat = "jpg";
   // Pro exige callback. Solo lo usamos como aviso; el estado real se consulta con la cola.

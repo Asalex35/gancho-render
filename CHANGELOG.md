@@ -1,5 +1,13 @@
 # Cambios de Gancho
 
+## 0.4.0 — 2026-10-12
+- **Hacks** (varios episodios en un video): al subirlo se marca "Es un hack". Gancho encuentra dónde termina el 1er episodio (pantalla negra + silencio, o el minuto que escriba el equipo) y saca transcripción, cuadros, caras y subtítulos solo de ese episodio. Portada y título son solo de la primera historia.
+- **Transcripción**: máximo 25 min por episodio (antes 40): inicio, medio y final.
+- **Imágenes en 1K** (1376×768): YouTube muestra 1280×720, sale más rápido y cuesta igual. Revisión de la imagen cada 5 s y aviso inmediato de Nano Banana.
+- **Historial por perfil**: cada quien ve solo lo que generó (episodios, lotes, videos); nadie abre lo de otro por enlace (el admin sí, para soporte).
+- **Descargar portada** en cada propuesta (JPG 1280×720 con logo del canal).
+- **Vista en YouTube** abre directo en Tendencias MX, con opción de Búsqueda; se quitó "Mi competencia".
+
 ## 0.3.0 — 2026-10-12
 - **Claude Haiku** como modelo por defecto (el más barato) para todo: propuestas, títulos, descripción, tags y revisión de portadas.
 - `CLAUDE_MODEL_CREATIVO` permite subir solo propuestas/títulos y lectura del video a un modelo mejor (p. ej. `claude-sonnet-5-5`) si baja la calidad, sin encarecer lo demás.

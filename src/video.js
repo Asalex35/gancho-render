@@ -27,6 +27,36 @@ export async function duracion(entrada) {
   return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
 }
 
+// Hacks (recopilación de varios episodios en un video): dónde termina el 1er episodio.
+// Busca pantallas negras (solo cuadros clave, rápido aun en 4K) y silencios cerca de donde debería estar el corte
+// (duración ÷ episodios). Si no encuentra nada claro, usa esa estimación.
+export async function finPrimeraHistoria(entrada, segundos, episodios = 3) {
+  const esperado = segundos / Math.max(2, episodios);
+  const desde = Math.max(30, esperado * 0.5), hasta = Math.min(segundos - 30, esperado * 1.6);
+  if (hasta <= desde) return { seg: esperado, metodo: "estimado" };
+  const num = (re, txt) => [...txt.matchAll(re)].map((m) => m.slice(1).map(Number));
+  const negroTxt = await ffmpeg(["-skip_frame", "nokey", "-ss", String(desde), "-to", String(hasta), "-i", entrada, "-an",
+    "-vf", "scale=160:-2,blackdetect=d=0:pix_th=0.12:pic_th=0.92", "-f", "null", "-"], { timeoutMs: 8 * 60e3 }).catch((e) => e.detalle || "");
+  const silTxt = await ffmpeg(["-ss", String(desde), "-to", String(hasta), "-i", entrada, "-vn", "-af", "silencedetect=n=-38dB:d=0.7", "-f", "null", "-"],
+    { timeoutMs: 8 * 60e3 }).catch((e) => e.detalle || "");
+  const negros = num(/black_start:([\d.]+) black_end:([\d.]+)/g, negroTxt).map(([a, b]) => ({ ini: desde + a, fin: desde + b }));
+  const silencios = num(/silence_start: ([\d.]+)[\s\S]*?silence_end: ([\d.]+)/g, silTxt).map(([a, b]) => ({ ini: desde + a, fin: desde + b }));
+  const lejania = (t) => (3 * Math.abs(t - esperado)) / esperado;
+  let mejor = null;
+  for (const n of negros) {
+    const conSilencio = silencios.some((s) => s.ini < n.fin + 4 && s.fin > n.ini - 4);
+    const puntos = Math.min(3, n.fin - n.ini + 0.5) + (conSilencio ? 2 : 0) - lejania(n.ini);
+    if (!mejor || puntos > mejor.puntos) mejor = { seg: n.ini, metodo: conSilencio ? "negro_y_silencio" : "negro", puntos };
+  }
+  if (!mejor || mejor.puntos < 0.5) {
+    for (const s of silencios.filter((x) => x.fin - x.ini >= 1.2)) {
+      const puntos = Math.min(3, s.fin - s.ini) - lejania(s.ini);
+      if (!mejor || puntos > mejor.puntos) mejor = { seg: s.ini, metodo: "silencio", puntos };
+    }
+  }
+  return mejor && mejor.puntos >= 0 ? { seg: Math.round(mejor.seg), metodo: mejor.metodo } : { seg: Math.round(esperado), metodo: "estimado" };
+}
+
 export const carpetaTemporal = () => fs.mkdtemp(path.join(os.tmpdir(), "gancho-"));
 
 // Audio comprimido en partes de 20 min (las APIs de transcripción aceptan ~25 MB por archivo).
@@ -70,8 +100,18 @@ export async function hojasDeContacto(cuadros) {
 }
 
 // Subtítulos SRT/VTT a texto plano.
-export function textoDeSubtitulos(s) {
-  return String(s || "")
+// hasta (segundos): en un hack solo se toman los subtítulos del 1er episodio.
+export function textoDeSubtitulos(s, hasta = Infinity) {
+  let txt = String(s || "");
+  if (Number.isFinite(hasta)) {
+    const bloques = txt.split(/\r?\n\s*\r?\n/);
+    const seg = (m) => Number(m[1] || 0) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+    txt = bloques.filter((b) => {
+      const m = b.match(/(?:(\d+):)?(\d{1,2}):(\d{2})[.,]\d+\s*-->/);
+      return !m || seg(m) < hasta;
+    }).join("\n\n");
+  }
+  return txt
     .replace(/^WEBVTT.*$/m, "")
     .split(/\r?\n/)
     .filter((l) => l.trim() && !/^\d+$/.test(l.trim()) && !/-->/.test(l))
@@ -83,7 +123,7 @@ export function textoDeSubtitulos(s) {
 
 // ---------- Transcripción limitada (máx. N minutos por episodio) ----------
 // Si el episodio es más largo, se toma el inicio, la mitad y el final: ahí están el planteamiento, el giro y el desenlace.
-export function planTranscripcion(segundos, maxMin = Number(process.env.TRANSCRIBE_MAX_MINUTES || 40)) {
+export function planTranscripcion(segundos, maxMin = Number(process.env.TRANSCRIBE_MAX_MINUTES || 25)) {
   const max = maxMin * 60;
   if (segundos <= max) return [{ desde: 0, dur: segundos }];
   const ini = max * 0.5, mid = max * 0.25, fin = max * 0.25;

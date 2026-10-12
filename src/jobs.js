@@ -54,6 +54,13 @@ export async function iniciarCola() {
   }
 }
 
+// Aviso de Nano Banana: la imagen ya está → se revisa de inmediato en vez de esperar el siguiente turno.
+export async function avisoNanoBanana(taskId) {
+  if (typeof taskId !== "string" || !taskId || taskId.length > 100) return;
+  const p = await one(`SELECT id FROM propuestas WHERE imagen->>'taskId' = $1 AND imagen->>'estado' = 'generando' AND NOT archivada`, [taskId]);
+  if (p) await enviar("revisar", { propuestaId: p.id, taskId, prioridad: PRIORIDAD.interactiva }, { prioridad: PRIORIDAD.interactiva });
+}
+
 export function enviar(nombre, data, { prioridad = PRIORIDAD.interactiva, startAfter } = {}) {
   return boss.send(nombre, data, { priority: prioridad, ...(startAfter ? { startAfter } : {}) });
 }
@@ -213,7 +220,7 @@ async function hImagen({ propuestaId, usuario, extra, prioridad, evitar = [], co
     if (!rowCount) return; // la propuesta cambió mientras se pintaba: se descarta este resultado
     if (r.taskId) {
       await repo.tocarEpisodio(p.episodio_id);
-      await enviar("revisar", { propuestaId, taskId, prioridad, evitar }, { prioridad, startAfter: taskId.startsWith("mock_") ? 2 : 20 });
+      await enviar("revisar", { propuestaId, taskId, prioridad, evitar }, { prioridad, startAfter: taskId.startsWith("mock_") ? 2 : 10 });
     } else {
       await guardarResultado(propuestaId, taskId, r.buffer, prioridad);
     }
@@ -313,7 +320,7 @@ async function hRevisar(data) {
   }
   if (r.estado === "generando") {
     if (vencido) return aRespaldo(data, "Nano Banana tardó demasiado.");
-    return enviar("revisar", data, { prioridad, startAfter: 8 });
+    return enviar("revisar", data, { prioridad, startAfter: 5 });
   }
   if (r.estado === "error") return aRespaldo(data, r.error);
   const buf = r.buffer || (await descargar(r.url));
@@ -479,19 +486,27 @@ async function hIngesta({ episodioId, usuario }) {
   try {
     await etapa("leyendo");
     const entrada = await storage.entradaFfmpeg(ep.video.key);
-    const segundos = await video.duracion(entrada);
-    if (segundos < 20) throw publico("El video dura menos de 20 segundos.");
-    const duracionMin = Math.round(segundos / 60);
+    const total = await video.duracion(entrada);
+    if (total < 20) throw publico("El video dura menos de 20 segundos.");
+    const duracionMin = Math.round(total / 60);
+    // Hack (varios episodios en un video): todo se saca solo del 1er episodio.
+    let segundos = total;
+    if (ep.video.hack) {
+      const corte = ep.video.finPrimero ? { seg: Math.min(ep.video.finPrimero, total), metodo: "manual" }
+        : await video.finPrimeraHistoria(entrada, total, ep.video.episodios || 3).catch(() => ({ seg: Math.round(total / (ep.video.episodios || 3)), metodo: "estimado" }));
+      segundos = Math.max(60, corte.seg);
+      await etapa("leyendo", { corte });
+    }
 
     // Cuadros generales (para entender lugares y escenas).
     const generales = await video.extraerCuadros(entrada, segundos, dir, 24);
     if (generales.length < 6) throw publico("No pude sacar cuadros del video.");
     const keys = {};
     for (const c of generales) keys[c.n] = await guardar(await fs.readFile(c.archivo));
-    await etapa("transcribiendo", { duracion: Math.round(segundos) });
+    await etapa("transcribiendo", { duracion: Math.round(total) });
 
     // Transcripción (subtítulos subidos > audio limitado a 40 min).
-    let texto = ep.video.subtitulos ? video.textoDeSubtitulos(ep.video.subtitulos) : "";
+    let texto = ep.video.subtitulos ? video.textoDeSubtitulos(ep.video.subtitulos, ep.video.hack ? segundos : Infinity) : "";
     let fuente = texto ? "subtitulos" : "ninguna";
     let frases = [];
     let parcial = false;

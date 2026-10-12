@@ -10,7 +10,7 @@ import { q, one, all, tx } from "./db.js";
 import * as repo from "./repo.js";
 import * as storage from "./storage.js";
 import * as nb from "./ai/nanobanana.js";
-import { enviar, PRIORIDAD, estadoCola } from "./jobs.js";
+import { enviar, PRIORIDAD, estadoCola, avisoNanoBanana } from "./jobs.js";
 import { orden as ordenProveedores, PROVEEDORES } from "./ai/imagen.js";
 import { tipoImagen, normalizarFoto, portadaFinal, portadaPropia, miniatura } from "./imagenes.js";
 import { interpretar, PLANTILLA, normal } from "./lotes.js";
@@ -72,7 +72,10 @@ export function crearApp() {
     if (!storage.verificarEnlace(key, req.query.exp, req.query.sig)) return res.sendStatus(404);
     res.set("Cache-Control", "no-store").sendFile(storage.rutaLocal(key), (e) => e && !res.headersSent && res.sendStatus(404));
   });
-  app.post(`/api/nb-callback/${config.callbackSecret}`, (req, res) => res.json({ ok: true }));
+  app.post(`/api/nb-callback/${config.callbackSecret}`, (req, res) => {
+    avisoNanoBanana(req.body?.data?.taskId || req.body?.taskId).catch(() => {});
+    res.json({ ok: true });
+  });
 
   // ---------- Login ----------
   const limiteLogin = rateLimit({ windowMs: 15 * 60e3, limit: 10, standardHeaders: true, legacyHeaders: false, message: { error: "Demasiados intentos. Espera 15 minutos." } });
@@ -166,6 +169,21 @@ export function crearApp() {
     res.json({ ok: true });
   }));
 
+  // ---------- Historial por perfil ----------
+  // Cada quien ve y toca solo lo que generó. El administrador puede abrir cualquier cosa por enlace (soporte).
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const DUENO = {
+    episodios: "SELECT creado_por FROM episodios WHERE id = $1",
+    auto: "SELECT creado_por FROM episodios WHERE id = $1",
+    lotes: "SELECT creado_por FROM lotes WHERE id = $1",
+    propuestas: "SELECT e.creado_por FROM propuestas p JOIN episodios e ON e.id = p.episodio_id WHERE p.id = $1",
+  };
+  app.use("/api/:tipo/:id", (req, res, next) => {
+    const sql = DUENO[req.params.tipo];
+    if (!sql || !UUID.test(req.params.id) || req.user?.rol === "admin") return next();
+    one(sql, [req.params.id]).then((r) => (r && r.creado_por !== req.usuario ? res.status(404).json({ error: "No encontrado." }) : next()), next);
+  });
+
   // ---------- Episodios ----------
   async function armarCast(castIn) {
     if (!Array.isArray(castIn)) return [];
@@ -204,7 +222,7 @@ export function crearApp() {
       SELECT e.id, e.titulo, e.canal, e.estado, e.actualizado, e.creado_por, e.lote_id, e.elegida,
         (SELECT coalesce(p.imagen->>'mini', p.imagen->>'key') FROM propuestas p WHERE p.episodio_id = e.id AND NOT p.archivada AND p.imagen->>'estado' = 'lista'
          ORDER BY (p.id = e.elegida) DESC, p.slot LIMIT 1) AS portada
-      FROM episodios e WHERE e.lote_id IS NULL AND e.origen = 'manual' ORDER BY e.actualizado DESC LIMIT 60`);
+      FROM episodios e WHERE e.lote_id IS NULL AND e.origen = 'manual' AND e.creado_por = $1 ORDER BY e.actualizado DESC LIMIT 60`, [req.usuario]);
     res.json(filas);
   }));
   app.get("/api/episodios/:id", envolver(async (req, res) => {
@@ -423,7 +441,7 @@ export function crearApp() {
     res.json(await all(`SELECT l.*, ${RESUMEN_LOTE},
         (SELECT count(*)::int FROM propuestas p JOIN episodios e2 ON e2.id = p.episodio_id
           WHERE e2.lote_id = l.id AND NOT p.archivada AND p.imagen->>'estado' = 'lista') AS imagenes_listas
-      FROM lotes l LEFT JOIN episodios e ON e.lote_id = l.id GROUP BY l.id ORDER BY l.creado DESC LIMIT 50`));
+      FROM lotes l LEFT JOIN episodios e ON e.lote_id = l.id WHERE l.creado_por = $1 GROUP BY l.id ORDER BY l.creado DESC LIMIT 50`, [req.usuario]));
   }));
   app.get("/api/lotes/:id", envolver(async (req, res) => {
     const id = uuid(req.params.id);
@@ -519,7 +537,7 @@ export function crearApp() {
           ORDER BY (p.id = e.elegida) DESC, coalesce((p.evaluacion->>'calificacion_final')::int, 0) DESC LIMIT 1) AS portada,
         (SELECT max(coalesce((p.evaluacion->>'calificacion_final')::int, (p.data->'calificacion'->>'total')::int)) FROM propuestas p
           WHERE p.episodio_id = e.id AND NOT p.archivada) AS mejor
-      FROM episodios e WHERE e.origen = 'auto' ORDER BY e.creado DESC LIMIT 100`));
+      FROM episodios e WHERE e.origen = 'auto' AND e.creado_por = $1 ORDER BY e.creado DESC LIMIT 100`, [req.usuario]));
   }));
 
   // 1) Pide dónde subir el video. Con R2/S3 el navegador sube directo al bucket.
@@ -559,11 +577,17 @@ export function crearApp() {
     if (await one("SELECT 1 FROM episodios WHERE video->>'key' = $1", [key])) throw publico("Ese video ya se registró.", 409);
     await reservarCupo(req.usuario, 3);
     const nombre = limpiar(req.body.nombreArchivo, 160);
+    // Hack: "12:30", "12.5" o "12" (minutos) → segundos.
+    const hack = req.body.hack === true;
+    const mmss = String(req.body.finPrimero ?? "").trim().match(/^(\d{1,3})(?::(\d{1,2}))?$|^(\d{1,3}\.\d+)$/);
+    const finPrimero = hack && mmss ? Math.round(mmss[3] ? Number(mmss[3]) * 60 : Number(mmss[1]) * 60 + Number(mmss[2] || 0)) || null : null;
+    const episodios = hack ? Math.min(6, Math.max(2, Number(req.body.episodios) || 3)) : null;
+    const notasHack = hack ? "HACK: este video junta varios episodios. Portada y título SOLO de la primera historia; ignora las demás. " : "";
     let ep;
     try { ep = await one(`INSERT INTO episodios (titulo, canal, modelo, brief, estado, origen, video, creado_por)
         VALUES ($1,$2,$3,$4,'procesando','auto',$5,$6) RETURNING id`,
-      [`Video: ${nombre.replace(/\.[^.]+$/, "")}`.slice(0, 120), canal.id, canal.modelo, { sinopsis: "", notas: limpiar(req.body.notas, 600) },
-        { key, nombre, etapa: "en_cola", subtitulos: limpiar(req.body.subtitulos, 400000) || null }, req.usuario]);
+      [`Video: ${nombre.replace(/\.[^.]+$/, "")}`.slice(0, 120), canal.id, canal.modelo, { sinopsis: "", notas: (notasHack + limpiar(req.body.notas, 600)).slice(0, 600) },
+        { key, nombre, etapa: "en_cola", subtitulos: limpiar(req.body.subtitulos, 400000) || null, hack, finPrimero, episodios }, req.usuario]);
     } catch (e) { await devolverCupo(req.usuario, 3); throw e; }
     await enviar("ingesta", { episodioId: ep.id, usuario: req.usuario }, { prioridad: PRIORIDAD.lote });
     res.json(ep);
@@ -582,7 +606,7 @@ export function crearApp() {
     // Si hay pocos, se completa con portadas de otros episodios de Gancho.
     const propias = await all(`SELECT coalesce(p.imagen->>'mini', p.imagen->>'key') AS key, p.data->>'titulo' AS titulo, e.canal
       FROM propuestas p JOIN episodios e ON e.id = p.episodio_id
-      WHERE NOT p.archivada AND p.imagen->>'estado' = 'lista' ORDER BY p.creado DESC LIMIT 24`).catch(() => []);
+      WHERE NOT p.archivada AND p.imagen->>'estado' = 'lista' AND e.creado_por = $1 ORDER BY p.creado DESC LIMIT 24`, [req.usuario]).catch(() => []);
     res.json({ videos, propias, youtubeApi: youtubeApi() });
   }));
   // Con YOUTUBE_API_KEY: lo que sale al buscar un tema, o lo que es tendencia en México.

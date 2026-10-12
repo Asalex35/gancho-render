@@ -584,7 +584,9 @@ function tarjeta(p, x, i, recargar) {
             .map(([k, v]) => h("div", { class: "bar" }, h("span", {}, k), h("i", { style: { "--v": v } }), h("span", {}, v)))))),
       h("div", {}, h("div", { class: "eyebrow", style: { marginBottom: "6px" } }, "Por qué va a funcionar"), h("ul", { class: "why" }, razones.slice(0, 3).map((r) => h("li", {}, r)))),
       x.errorRehacer ? h("div", { class: "probs" }, x.errorRehacer) : null,
-      img.estado === "lista" ? h("button", { class: "btn ghost full", type: "button", onclick: () => vistaYouTube(p, x).catch((e) => toast(e.message, true)) }, "▶ Ver cómo se ve en YouTube") : null,
+      img.estado === "lista" ? h("div", { class: "row", style: { gap: "8px" } },
+        h("button", { class: "btn ghost", type: "button", style: { flex: 1 }, onclick: () => vistaYouTube(p, x).catch((e) => toast(e.message, true)) }, "▶ Ver en YouTube"),
+        h("button", { class: "btn ghost", type: "button", style: { flex: 1 }, title: "JPG 1280×720 listo para subir a YouTube", onclick: () => descargar(`/api/episodios/${p.id}/portada.jpg?propuesta=${x.id}`) }, "⬇ Descargar")) : null,
       h("div", { class: "acciones" },
         h("button", { class: `btn ${elegida ? "" : "primary"} full`, type: "button", disabled: img.estado !== "lista" || OCUPADA(x) || p.eligiendo,
           onclick: async (e) => { const b = e.currentTarget; b.disabled = true; try { await api(`/api/propuestas/${x.id}/elegir`, { method: "POST" }); recargar(); } catch (er) { toast(er.message, true); b.disabled = false; } } },
@@ -659,7 +661,6 @@ async function vistaYouTube(p, x) {
   };
 
   const escenario = h("div", {});
-  const links = h("textarea", { rows: 2, placeholder: "Pega links de canales o videos (ej. youtube.com/@CuandoLosAngelesCaen)" });
   const pintar = () => {
     escenario.replaceChildren(h("div", { class: `yt ${oscuro ? "yt-dark" : "yt-light"}` }, pantallas[modo]()));
   };
@@ -669,41 +670,28 @@ async function vistaYouTube(p, x) {
       seg({ oscuro: "Oscuro", claro: "Claro" }, oscuro ? "oscuro" : "claro", (v) => { oscuro = v === "oscuro"; local.set("yt-oscuro", oscuro); pintar(); }),
       h("button", { class: "btn small", type: "button", onclick: (e) => { resaltar = !resaltar; e.currentTarget.classList.toggle("primary", resaltar); pintar(); } }, "Resaltar la mía"),
       h("button", { class: "btn small", type: "button", onclick: () => { semilla++; pintar(); } }, "Mover de lugar")));
-  // Con YOUTUBE_API_KEY: rodear la portada con lo que es tendencia o con lo que sale al buscar el tema.
-  const caja = h("input", { value: busqueda, placeholder: "¿Qué buscaría la gente?", style: { maxWidth: "320px" } });
+  // Tu portada junto a lo que es tendencia en México o lo que sale al buscar el tema (YouTube API).
+  // Sin la llave, usa las portadas de otros canales guardadas.
+  const caja = h("input", { value: busqueda, placeholder: "¿Qué buscaría la gente?", style: { maxWidth: "320px" }, hidden: true });
   const traer = async () => {
-    if (fuente === "guardada") { externos = null; return pintar(); }
     try {
       busqueda = caja.value.trim() || busqueda;
       externos = (await api(`/api/competencia/youtube${fuente === "busqueda" ? `?q=${encodeURIComponent(busqueda)}` : ""}`)).videos;
       pintar();
     } catch (er) { toast(er.message, true); }
   };
+  const buscarBtn = h("button", { class: "btn small", type: "button", hidden: true, onclick: traer }, "Buscar");
+  caja.addEventListener("keydown", (e) => { if (e.key === "Enter") traer(); });
   const fuentes = compCache.youtubeApi
     ? h("div", { class: "row", style: { gap: "6px" } },
-        seg({ guardada: "Mi competencia", tendencias: "Tendencias MX", busqueda: "Búsqueda" }, fuente, (v) => { fuente = v; caja.hidden = v !== "busqueda"; buscarBtn.hidden = v !== "busqueda"; traer(); }),
-        caja, null)
-    : h("span", { class: "muted", style: { fontSize: ".8rem" } }, "Con la API de YouTube también puedes ver tu portada junto a tendencias y búsquedas reales.");
-  const buscarBtn = h("button", { class: "btn small", type: "button", onclick: traer }, "Buscar");
-  if (compCache.youtubeApi) { fuentes.append(buscarBtn); caja.hidden = true; buscarBtn.hidden = true; caja.addEventListener("keydown", (e) => { if (e.key === "Enter") traer(); }); }
-  const nComp = h("span", { class: "muted" });
-  const contar = () => { nComp.textContent = compCache.videos.length ? `${compCache.videos.length} videos de otros canales` : "Todavía no hay videos de otros canales: pega los links de la competencia."; };
-  contar();
-  const agregar = h("button", { class: "btn small", type: "button", onclick: async (e) => {
-    const b = e.currentTarget; b.disabled = true; b.textContent = "Trayendo videos…";
-    try {
-      const r = await api("/api/competencia", { method: "POST", body: { links: links.value } });
-      await cargar(); contar(); pintar(); links.value = "";
-      toast(r.fallidos.length ? `Listo. No pude leer: ${r.fallidos.join(", ")}` : "Listo, ya salen en la vista previa", Boolean(r.fallidos.length));
-    } catch (er) { toast(er.message, true); }
-    b.disabled = false; b.textContent = "Agregar";
-  } }, "Agregar");
+        seg({ tendencias: "Tendencias MX", busqueda: "Búsqueda" }, "tendencias", (v) => { fuente = v; caja.hidden = buscarBtn.hidden = v !== "busqueda"; traer(); }),
+        caja, buscarBtn)
+    : null;
+  if (compCache.youtubeApi) { fuente = "tendencias"; await traer(); }
   const problemas = x.evaluacion?.problemas?.length ? h("div", { class: "risk" }, h("b", {}, "Lo que vio Gancho a tamaño chico: "), x.evaluacion.problemas.slice(0, 2).join(" · ")) : null;
 
   pintar();
   abrirModal(h("h2", {}, "Así se ve en YouTube"), controles, fuentes, escenario, problemas,
-    h("details", {}, h("summary", { class: "eyebrow", style: { cursor: "pointer" } }, "Portadas de otros canales"),
-      h("div", { class: "stack", style: { gap: "8px", marginTop: "10px" } }, nComp, links, h("div", {}, agregar))),
     h("div", { class: "foot" }, h("button", { class: "btn", type: "button", onclick: cerrarModal }, "Cerrar")));
   modal.classList.add("yt-ancho");
 }
@@ -896,7 +884,7 @@ async function vistaAdmin() {
 }
 
 // ================= AUTOMÁTICO =================
-const ETAPAS = [["en_cola", "En fila"], ["leyendo", "Sacando cuadros"], ["transcribiendo", "Escuchando (máx. 40 min)"], ["caras", "Buscando caras"], ["analizando", "Entendiendo la historia"], ["listo", "Haciendo portadas"]];
+const ETAPAS = [["en_cola", "En fila"], ["leyendo", "Sacando cuadros"], ["transcribiendo", "Escuchando (máx. 25 min)"], ["caras", "Buscando caras"], ["analizando", "Entendiendo la historia"], ["listo", "Haciendo portadas"]];
 function pasosVideo(etapa) {
   const i = ETAPAS.findIndex(([k]) => k === etapa);
   return h("div", { class: "pasos" }, ETAPAS.map(([k, t], j) => h("span", { class: j < i ? "hecho" : j === i ? "ahora" : "" }, j < i ? `✓ ${t}` : t)));
@@ -920,6 +908,13 @@ async function vistaAuto() {
   const notas = h("input", { type: "text", id: "auto-notas", placeholder: "Notas opcionales para todos estos videos (ej. evitar armas)" });
   notas.value = st.notas || "";
   notas.addEventListener("input", () => { st.notas = notas.value; guardar(); });
+  // Hack: recopilación de varios episodios; portada y título solo del 1er episodio.
+  const finPrimero = h("input", { type: "text", inputmode: "numeric", placeholder: "Opcional: el 1º termina en (ej. 38:20)", style: { maxWidth: "260px" } });
+  const nEpisodios = h("input", { type: "number", min: 2, max: 6, value: st.episodios || 3, style: { width: "70px" }, oninput: () => { st.episodios = Number(nEpisodios.value) || 3; guardar(); } });
+  const detallesHack = h("div", { class: "row", style: { gap: "8px" }, hidden: !st.hack }, h("label", { class: "row", style: { gap: "6px" } }, "Episodios en el video", nEpisodios), finPrimero);
+  const hack = h("label", { class: "row", style: { gap: "8px", cursor: "pointer" } },
+    h("input", { type: "checkbox", checked: Boolean(st.hack), onchange: (e) => { st.hack = e.target.checked; detallesHack.hidden = !st.hack; guardar(); } }),
+    h("span", {}, h("b", {}, "Es un hack"), h("span", { class: "muted" }, " · varios episodios en un video: portada y título solo del primero")));
   const progreso = h("div", { class: "stack", style: { gap: "6px", justifyItems: "center" } });
   const listaBox = h("div", {}, h("div", { class: "vacio" }, h("div", { class: "spin" })));
 
@@ -942,7 +937,8 @@ async function vistaAuto() {
           x.onerror = () => rechazar(new Error("Se cortó la subida. Revisa tu conexión."));
           x.send(f);
         });
-        await api("/api/auto/episodios", { method: "POST", body: { canal: st.canal, key: r.key, nombreArchivo: f.name, notas: st.notas, subtitulos: files.length === 1 ? subAuto.texto : null } });
+        await api("/api/auto/episodios", { method: "POST", body: { canal: st.canal, key: r.key, nombreArchivo: f.name, notas: st.notas, subtitulos: files.length === 1 ? subAuto.texto : null,
+          hack: Boolean(st.hack), episodios: st.episodios || 3, finPrimero: files.length === 1 ? finPrimero.value.trim() : "" } });
         ok++;
       } catch (e) { toast(`${f.name}: ${e.message}`, true); }
     }
@@ -1001,7 +997,7 @@ async function vistaAuto() {
       h("section", { class: "panel stack" },
         h("label", {}, "Canal", seg(opcionesCanal(), st.canal, (v) => { st.canal = v; guardar(); })),
         h("div", { class: "row" }, h("button", { class: "btn small", type: "button", onclick: () => sub.click() }, "Subtítulos o guion"), sub, subTxt),
-        notas,
+        notas, hack, detallesHack,
         h("p", { class: "muted", style: { margin: 0, fontSize: ".85rem" } }, "Gancho saca cuadros del video, entiende la historia, toma las caras de los actores y hace 3 portadas. Si el canal tiene aprobación automática y la mejor pasa la calificación, queda lista sola; si no, te avisa para que la apruebes."))),
     h("h2", { style: { marginBottom: "12px" } }, "Videos"),
     listaBox);
