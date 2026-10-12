@@ -12,9 +12,10 @@ export const RECONOCER = 0.45; // similitud mínima para decir "es este actor"
 export async function procesarFoto(actorId, fotoKey) {
   if (await one("SELECT 1 FROM actor_caras WHERE actor_id = $1 AND foto_key = $2", [actorId, fotoKey])) return;
   const buf = await storage.leer(fotoKey);
-  const utiles = await caras.analizarCuadro(buf, { minArea: 0.004 });
+  // Foto oficial del actor: filtros suaves (una foto retocada o en 3/4 sigue siendo buena referencia).
+  const utiles = await caras.analizarCuadro(buf, { minArea: 0.0008, minScore: 0.6, maxGiro: 0.75, minNitidez: 2 });
   const c = utiles.sort((a, b) => b.cara.area - a.cara.area)[0];
-  if (!c) return;
+  if (!c) { console.warn(`Biblioteca: no encontré una cara clara en la foto ${fotoKey} (actor ${actorId}). Sube una foto de frente.`); return false; }
   const { rostro } = await caras.recortes(buf, c.cara);
   const key = await storage.guardar("rostros", rostro, "jpg");
   await q(`INSERT INTO actor_caras (actor_id, key, huella, calidad, giro, origen, foto_key) VALUES ($1,$2,$3,$4,$5,'foto',$6)`,
@@ -26,7 +27,7 @@ export async function ponerAlDia() {
   const actores = await all("SELECT id, fotos FROM actores");
   let n = 0;
   for (const a of actores) for (const f of a.fotos || []) {
-    try { if (!(await one("SELECT 1 FROM actor_caras WHERE actor_id = $1 AND foto_key = $2", [a.id, f]))) { await procesarFoto(a.id, f); n++; } }
+    try { if (!(await one("SELECT 1 FROM actor_caras WHERE actor_id = $1 AND foto_key = $2", [a.id, f])) && (await procesarFoto(a.id, f)) !== false) n++; }
     catch (e) { console.warn("Biblioteca:", e.message); }
   }
   if (n) console.log(`Biblioteca de rostros: ${n} fotos procesadas`);

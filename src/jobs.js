@@ -361,7 +361,7 @@ async function hEvaluar({ propuestaId, key, prioridad, sinReintento }) {
       if (h) objetivos.push({ personaje: c.personaje, huella: h });
     }
     if (objetivos.length) {
-      const enPortada = await caras.analizarCuadro(await storage.leer(key), { minArea: 0.003 }).catch(() => []);
+      const enPortada = await caras.analizarCuadro(await storage.leer(key), { minArea: 0.002, minScore: 0.6, maxGiro: 0.75, minNitidez: 2 }).catch(() => []); // piel de IA = poca "nitidez"
       ev.parecido = objetivos.map((o) => ({
         personaje: o.personaje,
         sim: Math.round(Math.max(0, ...enPortada.map((c) => caras.similitud(o.huella, c.huella))) * 100) / 100,

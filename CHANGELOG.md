@@ -1,5 +1,10 @@
 # Cambios de Gancho
 
+## 0.4.5 — 2026-10-12
+- **Arreglo de parecido**: el detector descartaba la cara de fotos de actores retocadas o en 3/4 (filtro de nitidez pensado para video). Las fotos oficiales ahora usan filtros suaves; sin esto el actor se quedaba sin cara de referencia y sin medición de parecido.
+- La medición de parecido en la portada también acepta la piel lisa de las imágenes de IA.
+- Si una foto de actor no tiene una cara usable, queda en el registro con un aviso claro (antes se reintentaba en silencio en cada arranque).
+
 ## 0.4.4 — 2026-10-12
 - Cada portada muestra qué personajes se pintaron sin foto de actor ("Prima: sin foto") y el episodio avisa arriba qué personajes no tienen actor con foto, con enlace para asignarlos.
 - Registro por imagen en el servidor: con foto / sin foto.

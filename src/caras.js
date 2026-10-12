@@ -133,15 +133,17 @@ export async function recortes(imagen, c) {
 }
 
 // Todas las caras útiles de un cuadro, con su calidad y su huella.
-export async function analizarCuadro(archivo, { minArea = 0.006 } = {}) {
+// Filtros pensados para cuadros de video. Las fotos oficiales de actores usan filtros más suaves
+// (retocadas o con poco detalle de piel dan "nitidez" baja aunque la cara sea perfecta).
+export async function analizarCuadro(archivo, { minArea = 0.006, minScore = 0.8, maxGiro = 0.6, minNitidez = 8 } = {}) {
   const todas = await detectar(archivo);
   const utiles = [];
   for (const c of todas) {
-    if (c.area < minArea || c.score < 0.8) continue;
+    if (c.area < minArea || c.score < minScore) continue;
     const g = giro(c);
-    if (g > 0.6) continue; // de perfil: no sirve de referencia
+    if (g > maxGiro) continue; // de perfil: no sirve de referencia
     const nit = await nitidez(archivo, c);
-    if (nit < 8) continue;
+    if (nit < minNitidez) continue;
     const frontal = 1 - Math.min(1, g * 1.6);
     utiles.push({ cara: c, giro: g, nitidez: nit, sola: todas.filter((k) => k.area > c.area * 0.35).length === 1,
       calidad: Math.sqrt(c.area) * Math.min(nit, 40) * c.score * (0.55 + 0.45 * frontal), huella: await huella(archivo, c) });
