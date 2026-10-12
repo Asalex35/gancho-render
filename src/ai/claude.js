@@ -91,12 +91,12 @@ export class ErrorIA extends Error {
   constructor(msg, { reintentable = false } = {}) { super(msg); this.publico = true; this.reintentable = reintentable; }
 }
 
-async function llamar({ content, schema, effort = "medium", maxTokens = 16000 }) {
+async function llamar({ content, schema, effort = "medium", maxTokens = 16000, creativo = false }) {
   const fmt = zodOutputFormat(schema);
   let res;
   try {
     res = await turno(() => client.beta.messages.create({
-      model: config.claudeModel,
+      model: creativo ? config.claudeModelCreativo : config.claudeModel,
       max_tokens: maxTokens,
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",
@@ -177,7 +177,7 @@ máximo 3 personas protagonistas, extras desenfocados al fondo, nada importante 
 Escribe porque_funciona y riesgo cortos y directos: el equipo los lee rápido.
 ANTES DE RESPONDER revisa cada título: si insinúa o menciona algo del DESENLACE (cómo termina, quién regresa, embarazos, castigos, éxitos futuros), reescríbelo.
 IDIOMA: títulos en ${nombreIdioma(canal.idioma)}${canal.idioma !== "es" ? " (y su traducción al español en traduccion)" : ""}; todo lo demás para el equipo en español.`;
-  return llamar({ content, schema: RespuestaPropuestas, effort: "high" });
+  return llamar({ content, schema: RespuestaPropuestas, effort: "high", creativo: true });
 }
 
 export async function rehacerPropuesta(ep, canal, anterior, { objetivo, razones, comentario }, feedback) {
@@ -195,7 +195,7 @@ POR QUÉ NO GUSTÓ: ${[...razones, comentario].filter(Boolean).join("; ") || "si
 
 TAREA: ${queCambiar} Corrige exactamente lo que el equipo señaló. Mantén el encuadre cerrado (caras grandes).
 Devuelve el gancho y UNA sola propuesta en "propuestas".`;
-  const r = await llamar({ content, schema: RespuestaPropuestas, effort: "high" });
+  const r = await llamar({ content, schema: RespuestaPropuestas, effort: "high", creativo: true });
   return r.propuestas[0];
 }
 
@@ -277,7 +277,7 @@ Si no estás seguro de qué fila es de quién, pon 0. Si no hay filas útiles, u
 En cuadros_momento elige los cuadros generales que mejor muestran el lugar del momento cumbre.`,
     },
   ];
-  return llamar({ content, schema: AnalisisVideo, effort: "high", maxTokens: 12000 });
+  return llamar({ content, schema: AnalisisVideo, effort: "high", maxTokens: 12000, creativo: true });
 }
 
 // ---------- Ayuda para crear canales ----------

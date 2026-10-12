@@ -22,7 +22,10 @@ export const config = {
   databaseUrl: requerido("DATABASE_URL"),
   anthropicKey: requerido("ANTHROPIC_API_KEY"),
   nanoBananaKey: requerido("NANOBANANA_API_KEY"),
-  claudeModel: env.CLAUDE_MODEL || "claude-opus-5-5",
+  // Haiku es el más barato. Si los títulos/propuestas bajan de calidad, sube solo esa parte con CLAUDE_MODEL_CREATIVO
+  // (p. ej. claude-sonnet-5-5) sin encarecer descripción, tags y revisión de portadas.
+  claudeModel: env.CLAUDE_MODEL || "claude-haiku-5-5",
+  claudeModelCreativo: env.CLAUDE_MODEL_CREATIVO || env.CLAUDE_MODEL || "claude-haiku-5-5",
   sessionSecret: env.SESSION_SECRET || (PROD ? requerido("SESSION_SECRET") : crypto.randomBytes(32).toString("hex")),
   // Firma de los enlaces temporales de fotos para Nano Banana (modo almacenamiento local)
   linkSecret: env.LINK_SECRET || env.SESSION_SECRET || crypto.randomBytes(32).toString("hex"),
