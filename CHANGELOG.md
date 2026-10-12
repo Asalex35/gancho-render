@@ -1,5 +1,9 @@
 # Cambios de Gancho
 
+## 0.4.2 — 2026-10-12
+- **Sin personajes duplicados**: cada cara de referencia es de un solo personaje; los personajes sin foto llevan rasgos claramente distintos.
+- La revisión automática cuenta cuántas veces aparece la cara del actor: si sale repetida, marca el problema y la repinta sola.
+
 ## 0.4.1 — 2026-10-12
 - **Títulos y propuestas con Claude Sonnet** (Haiku sigue para descripción, tags y revisión): con Haiku los títulos salían narrativos.
 - **Reglas duras de título**: no describir la portada ni contar la historia, sin edades ni nombres propios (solo arquetipos), 45–70 caracteres, un solo giro.

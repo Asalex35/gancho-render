@@ -175,6 +175,7 @@ color saturado, luz, "no text, no letters, no watermark", espacio libre abajo a 
 ENCUADRE OBLIGATORIO: plano medio cerrado, las caras principales ocupan al menos un tercio del alto de la imagen,
 máximo 3 personas protagonistas, extras desenfocados al fondo, nada importante en la esquina inferior derecha.
 Escribe porque_funciona y riesgo cortos y directos: el equipo los lee rápido.
+PERSONAJES SIN ACTOR (sin foto): en prompt_imagen dales rasgos claramente distintos a los de los actores con foto (otro color y peinado de cabello, otra edad o complexión), para que la imagen no repita la cara del protagonista.
 ANTES DE RESPONDER revisa cada título: si insinúa o menciona algo del DESENLACE (cómo termina, quién regresa, embarazos, castigos, éxitos futuros), reescríbelo.
 IDIOMA: títulos en ${nombreIdioma(canal.idioma)}${canal.idioma !== "es" ? " (y su traducción al español en traduccion)" : ""}; todo lo demás para el equipo en español.`;
   return llamar({ content, schema: RespuestaPropuestas, effort: "high", creativo: true });

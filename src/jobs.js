@@ -165,7 +165,16 @@ async function referencias(ep, data, { conEscena = true } = {}) {
   return refs;
 }
 
-function promptConReferencias(prompt, refs, extra) {
+// Sin foto, Nano Banana tiende a copiar la cara del actor de referencia en los demás personajes (dos "Yosuanis").
+function unaCara(refs, personajes) {
+  const conCara = refs.filter((r) => !r.escena).map((r) => r.personaje);
+  const sinCara = personajes.filter((p) => !conCara.some((c) => normal(c) === normal(p)));
+  return `EACH REFERENCE FACE BELONGS TO EXACTLY ONE PERSON (${conCara.join(", ")}). Never reuse, mirror or blend a reference face on anyone else.` +
+    (sinCara.length ? ` ${sinCara.join(", ")} ${sinCara.length > 1 ? "are different people" : "is a different person"}: clearly different face, hair color and hairstyle, age and build.` : "") +
+    " Background extras must also look clearly different from the reference actors.";
+}
+
+function promptConReferencias(prompt, refs, extra, personajes = []) {
   let n = 0;
   const mapa = refs.map((r) => {
     const idx = r.fotos.map(() => ++n);
@@ -178,7 +187,8 @@ function promptConReferencias(prompt, refs, extra) {
 LIKENESS IS THE TOP PRIORITY: each character must be instantly recognizable as the real actor in the references.
 Copy the exact facial structure: eye shape and spacing, eyebrows, nose, lips, jawline, hairline, skin tone, wrinkles and age.
 Do not beautify, slim, de-age or change ethnicity. Photorealistic skin, no plastic or airbrushed look.
-Use the references ONLY for identity and wardrobe; build a new, more dramatic composition.\n\n` : "";
+Use the references ONLY for identity and wardrobe; build a new, more dramatic composition.
+${unaCara(refs, personajes)}\n\n` : "";
   // Las portadas de la competencia son claras y saturadas: una portada oscura se pierde en la página de inicio.
   const luz = "LIGHTING: bright, high-key commercial lighting with vivid saturated colors; faces brightly and evenly lit. Even night or hospital scenes must read clearly at thumbnail size: no dark, gloomy or low-key images.";
   return `${cabeza}${prompt}\n\n${luz}${extra ? `\n\nFIX THESE PROBLEMS FROM THE PREVIOUS ATTEMPT: ${extra}` : ""}`;
@@ -206,7 +216,7 @@ async function hImagen({ propuestaId, usuario, extra, prioridad, evitar = [], co
   try {
     const ep = await repo.episodio(p.episodio_id);
     const refs = await referencias(ep, p.data);
-    const prompt = promptConReferencias(p.data.prompt_imagen, refs, extra);
+    const prompt = promptConReferencias(p.data.prompt_imagen, refs, extra, p.data.personajes_en_portada || []);
     const r = await imagen.generar({
       prompt, refs: await prepararRefs(refs), modelo: ep.modelo, evitar,
       alCambiar: (prov, err) => avisarCambio(ep.canal, prov, err),
@@ -354,9 +364,13 @@ async function hEvaluar({ propuestaId, key, prioridad, sinReintento }) {
         sim: Math.round(Math.max(0, ...enPortada.map((c) => caras.similitud(o.huella, c.huella))) * 100) / 100,
       }));
       const bajos = ev.parecido.filter((x) => x.sim < 0.35);
-      if (bajos.length) {
+      // La misma cara del actor en dos o más personas = personaje duplicado.
+      const repetidos = objetivos.filter((o) => enPortada.filter((c) => caras.similitud(o.huella, c.huella) >= 0.45).length >= 2).map((o) => o.personaje);
+      if (repetidos.length) ev.duplicados = repetidos;
+      if (bajos.length || repetidos.length) {
         ev.aprobada = false;
-        ev.problemas = [...bajos.map((x) => `La cara de ${x.personaje} no se parece al actor real`), ...(ev.problemas || [])].slice(0, 3);
+        ev.problemas = [...repetidos.map((n) => `La cara de ${n} aparece repetida en otro personaje`),
+          ...bajos.map((x) => `La cara de ${x.personaje} no se parece al actor real`), ...(ev.problemas || [])].slice(0, 3);
       }
     }
   } finally {
@@ -374,7 +388,8 @@ async function hEvaluar({ propuestaId, key, prioridad, sinReintento }) {
   await repo.tocarEpisodio(p.episodio_id);
   if (!fila) return;
   if (reintentar) {
-    const extra = [...ev.problemas, ...(ev.parecido?.some((x) => x.sim < 0.35) ? ["MATCH THE REFERENCE FACES EXACTLY: same facial structure, same age, same skin tone"] : [])].join("; ");
+    const extra = [...ev.problemas, ...(ev.parecido?.some((x) => x.sim < 0.35) ? ["MATCH THE REFERENCE FACES EXACTLY: same facial structure, same age, same skin tone"] : []),
+      ...(ev.duplicados?.length ? [`ONLY ONE PERSON may have the face of ${ev.duplicados.join(", ")}; every other person needs a clearly different face and hair`] : [])].join("; ");
     // La versión con defectos se guarda (se puede restaurar) en vez de perderse.
     await q("INSERT INTO versiones (propuesta_id, data, imagen, evaluacion, feedback) VALUES ($1,$2,$3,$4,$5)",
       [propuestaId, p.data, p.imagen, ev, { objetivo: "portada", razones: ["Revisión automática"], comentario: ev.problemas.join("; ") }]);
