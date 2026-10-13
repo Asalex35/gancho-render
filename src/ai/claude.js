@@ -215,9 +215,9 @@ const TEXTOS = {
 export async function disenarFormato({ ep, canal, propuesta, formato }) {
   const content = `${describirEpisodio(ep, canal)}
 
-PORTADA DE YOUTUBE ELEGIDA (misma historia y mismos actores, pero NO copies su composición):
+${propuesta ? `PORTADA DE YOUTUBE ELEGIDA (misma historia y mismos actores, pero NO copies su composición):
 Título: "${propuesta.titulo}"
-Concepto: ${propuesta.concepto || ""}
+Concepto: ${propuesta.concepto || ""}` : "No hay portada de YouTube: diseña directo desde la historia, eligiendo el momento más fuerte para esta plataforma."}
 
 NUEVO FORMATO: ${formato.nombre} · proporción ${formato.aspecto}
 GUÍA VISUAL (en inglés, síguela al pie de la letra): ${formato.guia}

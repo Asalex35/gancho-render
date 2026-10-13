@@ -232,7 +232,8 @@ export function crearApp() {
     const filas = await all(`
       SELECT e.id, e.titulo, e.canal, e.estado, e.actualizado, e.creado_por, e.lote_id, e.elegida,
         (SELECT coalesce(p.imagen->>'mini', p.imagen->>'key') FROM propuestas p WHERE p.episodio_id = e.id AND NOT p.archivada AND p.imagen->>'estado' = 'lista'
-         ORDER BY (p.id = e.elegida) DESC, p.slot LIMIT 1) AS portada
+         ORDER BY (p.id = e.elegida) DESC, p.slot LIMIT 1) AS portada,
+        (SELECT coalesce(f.imagen->>'mini', f.imagen->>'key') FROM formatos f WHERE f.episodio_id = e.id AND f.estado = 'lista' ORDER BY f.creado DESC LIMIT 1) AS portada_formato
       FROM episodios e WHERE e.lote_id IS NULL AND e.origen = 'manual' AND (e.creado_por = $1 OR $2) ORDER BY e.actualizado DESC LIMIT 60`, [req.usuario, verTodo(req)]);
     res.json(filas);
   }));
@@ -643,6 +644,26 @@ export function crearApp() {
     await reservarCupo(req.usuario, tipos.length);
     for (const tipo of tipos) {
       const f = await one("INSERT INTO formatos (propuesta_id, episodio_id, tipo, creado_por) VALUES ($1,$2,$3,$4) RETURNING id", [p.id, p.episodio_id, tipo, req.usuario]);
+      await enviar("formato", { formatoId: f.id, usuario: req.usuario }, { prioridad: PRIORIDAD.interactiva });
+    }
+    res.status(202).json({ ok: true });
+  }));
+  // Solo redes o Prisma Plus, sin portada de YouTube (o de todo el episodio).
+  app.get("/api/episodios/:id/formatos", envolver(async (req, res) => {
+    res.json((await all("SELECT * FROM formatos WHERE episodio_id = $1 ORDER BY creado DESC LIMIT 60", [uuid(req.params.id)])).map(verFormato));
+  }));
+  app.post("/api/episodios/:id/formatos", envolver(async (req, res) => {
+    const ep = await repo.episodio(uuid(req.params.id), { ligero: true });
+    if (!ep) throw publico("Ese episodio no existe.", 404);
+    if (!ep.brief?.sinopsis) throw publico("Primero escribe la historia del episodio.");
+    if (["procesando", "en_cola", "pensando"].includes(ep.estado)) throw publico("Espera a que Gancho termine de leer el episodio.", 409);
+    const tipos = [...new Set((Array.isArray(req.body?.tipos) ? req.body.tipos : []).filter((t) => TIPOS.includes(t)))];
+    if (!tipos.length) throw publico("Elige al menos un formato.");
+    const enCurso = await one("SELECT count(*)::int AS n FROM formatos WHERE episodio_id = $1 AND estado IN ('en_cola','generando')", [ep.id]);
+    if (enCurso.n + tipos.length > 10) throw publico("Espera a que terminen las imágenes que se están haciendo.", 409);
+    await reservarCupo(req.usuario, tipos.length);
+    for (const tipo of tipos) {
+      const f = await one("INSERT INTO formatos (propuesta_id, episodio_id, tipo, creado_por) VALUES ($1,$2,$3,$4) RETURNING id", [null, ep.id, tipo, req.usuario]);
       await enviar("formato", { formatoId: f.id, usuario: req.usuario }, { prioridad: PRIORIDAD.interactiva });
     }
     res.status(202).json({ ok: true });

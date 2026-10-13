@@ -1,5 +1,9 @@
 # Cambios de Gancho
 
+## 0.5.3 — 2026-10-13
+- **Solo redes o Prisma Plus**: se puede pedir solo TikTok, solo Facebook, solo el póster, etc., directo desde la historia del episodio, sin hacer antes la portada de YouTube. Botón "✦ Solo redes o Prisma Plus" al empezar y "✦ Redes y Prisma Plus" siempre arriba del episodio.
+- En Inicio, si un episodio solo tiene versiones de redes, se muestra la última como miniatura.
+
 ## 0.5.2 — 2026-10-13
 - Versiones (redes y Prisma Plus): si el servidor se reinicia o Nano Banana tarda, la imagen ya pagada se retoma y se recupera (hasta 40 min) en vez de perderse.
 - Textos: "imágenes" con acento, "Pintando… tarda 1 a 3 min", "El gancho de la historia".

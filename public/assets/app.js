@@ -156,7 +156,7 @@ async function vistaInicio() {
         ? h("div", { class: "episodios" }, eps.map((p) => {
             const [txt, cls] = estados[p.estado] || ["", ""];
             return h("button", { class: "ep", type: "button", onclick: () => (location.hash = `#/ep/${p.id}`) },
-              h("div", { class: "img" }, p.portada ? h("img", { src: media(p.portada), alt: "", loading: "lazy" }) : "Sin portada todavía"),
+              h("div", { class: "img" }, p.portada || p.portada_formato ? h("img", { src: media(p.portada || p.portada_formato), alt: "", loading: "lazy" }) : "Sin portada todavía"),
               h("div", { class: "txt" }, h("b", {}, p.titulo),
                 h("div", { class: "row" }, h("span", { class: "tag" }, canalNombre(p.canal)), h("span", { class: `tag ${cls}` }, txt), p.elegida ? h("span", { class: "tag ok" }, "Elegida") : null),
                 h("span", { class: "muted", style: { fontSize: ".78rem" } }, `${p.creado_por} · ${fecha(p.actualizado)}`)));
@@ -510,6 +510,7 @@ function pintarEpisodio(p) {
     h("div", { class: "row" },
       h("a", { class: "btn", href: `#/ep/${p.id}/editar` }, "Editar historia y cast"),
       h("button", { class: "btn", type: "button", disabled: pensando, onclick: () => subirPortadaPropia(p, recargar) }, "Subir mi portada"),
+      p.brief?.sinopsis ? h("button", { class: "btn", type: "button", disabled: pensando || p.estado === "procesando", onclick: () => vistaFormatos(p).catch((e) => toast(e.message, true)) }, "✦ Redes y Prisma Plus") : null,
       p.propuestas.length ? h("button", { class: "btn", type: "button", disabled: pensando || p.propuestas.some(OCUPADA) || p.eligiendo,
         title: p.propuestas.some(OCUPADA) ? "Espera a que terminen las portadas actuales" : "",
         onclick: () => confirmar("¿Hacer 3 propuestas nuevas?", `Las actuales se guardan en el historial y se borra la descripción. Cuesta ≈${3 * (me.creditosPorImagen || 18)} créditos.`, generar, "Sí, hacer 3 nuevas") }, "3 propuestas nuevas") : null,
@@ -539,7 +540,9 @@ function pintarEpisodio(p) {
     partes.push(h("div", { class: "vacio" }, h("h2", {}, "¿Cómo quieres hacer la portada?"),
       h("div", { class: "row", style: { justifyContent: "center" } },
         h("button", { class: "btn primary big", type: "button", onclick: generar }, "Que Gancho haga 3 propuestas"),
-        h("button", { class: "btn big", type: "button", onclick: () => subirPortadaPropia(p, recargar) }, "Subir la mía"))));
+        h("button", { class: "btn big", type: "button", onclick: () => vistaFormatos(p).catch((e) => toast(e.message, true)) }, "✦ Solo redes o Prisma Plus"),
+        h("button", { class: "btn big", type: "button", onclick: () => subirPortadaPropia(p, recargar) }, "Subir la mía")),
+      h("p", { class: "muted", style: { margin: 0, fontSize: ".85rem" } }, "¿Solo quieres TikTok, Instagram, Facebook o el póster de Prisma Plus? Usa «Solo redes o Prisma Plus».")));
   }
   if (p.gancho && !pensando) {
     const g = p.gancho;
@@ -756,14 +759,16 @@ function tarjetaFormato(f, recargar) {
     h("div", { class: "row", style: { gap: "6px" } },
       f.estado === "lista" ? h("button", { class: "btn small", type: "button", onclick: () => descargar(`/api/formatos/${f.id}/descargar`) }, "⬇ Descargar") : null,
       f.estado === "error" ? h("button", { class: "btn small", type: "button", onclick: async () => {
-        try { await api(`/api/propuestas/${f.propuesta_id}/formatos`, { method: "POST", body: { tipos: [f.tipo] } }); toast("Pintando otra vez…"); recargar(); } catch (e) { toast(e.message, true); }
+        try { await api(f.propuesta_id ? `/api/propuestas/${f.propuesta_id}/formatos` : `/api/episodios/${f.episodio_id}/formatos`, { method: "POST", body: { tipos: [f.tipo] } }); toast("Pintando otra vez…"); recargar(); } catch (e) { toast(e.message, true); }
       } }, "Otra vez") : null,
       !ocupado ? h("button", { class: "btn small ghost danger", type: "button", onclick: async () => {
         try { await api(`/api/formatos/${f.id}`, { method: "DELETE" }); recargar(); } catch (e) { toast(e.message, true); }
       } }, "Borrar") : null));
 }
 
-async function vistaFormatos(p, x) {
+async function vistaFormatos(p, x = null) {
+  // Con portada de YouTube (x) se rediseña a partir de ella; sin ella, directo desde la historia del episodio.
+  const base = x ? `/api/propuestas/${x.id}/formatos` : `/api/episodios/${p.id}/formatos`;
   tiposFormato ||= await api("/api/formatos/tipos");
   const elegidos = new Set(local.get("fmt-elegidos") || ["tiktok"]);
   const galeria = h("div", { class: "fmt-grid" });
@@ -771,7 +776,7 @@ async function vistaFormatos(p, x) {
   const recargar = async () => {
     clearTimeout(t);
     if (!modal.open) return;
-    const lista = await api(`/api/propuestas/${x.id}/formatos`).catch(() => []);
+    const lista = await api(base).catch(() => []);
     galeria.replaceChildren(...(lista.length ? lista.map((f) => tarjetaFormato(f, recargar)) : [h("p", { class: "muted", style: { margin: 0 } }, "Todavía no hay imágenes de esta portada.")]));
     if (lista.some((f) => ["en_cola", "generando"].includes(f.estado))) t = setTimeout(recargar, 4000);
   };
@@ -789,18 +794,19 @@ async function vistaFormatos(p, x) {
     nota ? h("span", { class: "muted", style: { fontSize: ".8rem" } }, nota) : null, tiposFormato.filter((tf) => tf.grupo === g).map(casilla));
   crear.addEventListener("click", async () => {
     crear.disabled = true;
-    try { await api(`/api/propuestas/${x.id}/formatos`, { method: "POST", body: { tipos: [...elegidos] } }); toast("Pintando… tardan 1 a 3 minutos"); await recargar(); }
+    try { await api(base, { method: "POST", body: { tipos: [...elegidos] } }); toast("Pintando… tardan 1 a 3 minutos"); await recargar(); }
     catch (er) { toast(er.message, true); }
     costo();
   });
   abrirModal(h("h2", {}, "Redes y Prisma Plus"),
-    h("p", { class: "muted", style: { margin: 0 } }, `Misma historia y mismos actores que “${x.titulo}”, rediseñada para cada plataforma.`),
+    h("p", { class: "muted", style: { margin: 0 } }, x ? `Misma historia y mismos actores que “${x.titulo}”, rediseñada para cada plataforma.`
+      : "Elige solo lo que necesitas. Gancho lo hace directo desde la historia, con los actores del cast (sin portada de YouTube)."),
     h("div", { class: "grid2" },
       grupo("redes", "Redes", "TikTok con título grande (estilo apps de series), Instagram y Facebook."),
       grupo("prisma", "Prisma Plus", "Póster de cine y banner para la app: fotorrealista, nivel película.")),
     h("div", { class: "row", style: { justifyContent: "space-between" } }, costoEl,
       crear),
-    h("div", { class: "eyebrow" }, "Imágenes de esta portada"), galeria,
+    h("div", { class: "eyebrow" }, x ? "Imágenes de esta portada" : "Imágenes de este episodio"), galeria,
     h("div", { class: "foot" }, h("button", { class: "btn", type: "button", onclick: cerrarModal }, "Cerrar")));
   modal.classList.add("yt-ancho");
   await recargar();

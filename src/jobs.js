@@ -305,11 +305,11 @@ async function hFormato({ formatoId, usuario }) {
   const f = await one(`UPDATE formatos SET estado = 'generando', error = NULL, actualizado = now() WHERE id = $1 AND estado IN ('en_cola', 'generando') AND NOT (imagen ? 'taskId') RETURNING *`, [formatoId]);
   if (!f) return;
   const spec = FORMATOS[f.tipo];
-  const p = await repo.propuesta(f.propuesta_id);
-  const ep = p && (await repo.episodio(f.episodio_id));
-  if (!spec || !ep) throw publico("La portada original ya no existe.");
+  const p = f.propuesta_id ? await repo.propuesta(f.propuesta_id) : null;
+  const ep = await repo.episodio(f.episodio_id);
+  if (!spec || !ep || (f.propuesta_id && !p)) throw publico("La portada original ya no existe.");
   const canal = await repo.canal(ep.canal);
-  const diseno = await ia.disenarFormato({ ep, canal, propuesta: p.data, formato: spec });
+  const diseno = await ia.disenarFormato({ ep, canal, propuesta: p?.data || null, formato: spec });
   await repo.sumarUso(usuario, "textos");
   const refs = await referencias({ ...ep, modelo: "pro" }, { personajes_en_portada: diseno.personajes_en_portada }, { conEscena: false });
   const prompt = promptConReferencias(diseno.prompt_imagen, refs, null, diseno.personajes_en_portada, { luz: spec.grupo !== "prisma" });

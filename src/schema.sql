@@ -186,3 +186,7 @@ CREATE INDEX IF NOT EXISTS formatos_usuario_idx ON formatos (creado_por, tipo, c
 
 -- Búsqueda rápida del aviso de Nano Banana por taskId.
 CREATE INDEX IF NOT EXISTS propuestas_task_idx ON propuestas ((imagen->>'taskId')) WHERE imagen->>'estado' = 'generando';
+
+-- Se puede pedir solo TikTok/Facebook/Prisma Plus sin hacer antes la portada de YouTube.
+ALTER TABLE formatos ALTER COLUMN propuesta_id DROP NOT NULL;
+CREATE INDEX IF NOT EXISTS formatos_ep_idx ON formatos (episodio_id, creado DESC);
