@@ -1,5 +1,9 @@
 # Cambios de Gancho
 
+## 0.6.2 — 2026-10-13
+- **Paso 3 "¿Para dónde es?" en el formulario**: se marca YouTube, TikTok, Instagram, Facebook, póster o banner de Prisma Plus. Si no se marca YouTube, no se hace la portada de YouTube. El botón dice qué se va a crear y cuánto cuesta ("Crear TikTok · 18 créditos").
+- La pantalla del episodio muestra sus versiones de redes y Prisma Plus directamente (con "+ Más versiones"), y ofrece hacer las de YouTube después si se quieren.
+
 ## 0.6.1 — 2026-10-13
 - **Cuando algo no se genera, dice por qué** y qué hacer: la IA no quiso (escena sensible), se acabaron los créditos, tardó demasiado, servicio saturado, llave inválida o foto que no se pudo descargar. El administrador ve el detalle técnico al pasar el mouse.
 - Si la IA no quiere escribir las propuestas, explica qué suavizar en la historia.

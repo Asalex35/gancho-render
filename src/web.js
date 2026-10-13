@@ -240,7 +240,8 @@ export function crearApp() {
   app.get("/api/episodios/:id", envolver(async (req, res) => {
     const ep = await repo.episodio(uuid(req.params.id), { ligero: true });
     if (!ep) throw publico("Ese episodio no existe.", 404);
-    res.json(repo.publicarEpisodio(ep));
+    const formatos = (await all("SELECT * FROM formatos WHERE episodio_id = $1 ORDER BY creado DESC LIMIT 40", [ep.id])).map(verFormato);
+    res.json({ ...repo.publicarEpisodio(ep), formatos });
   }));
   app.post("/api/episodios", envolver(async (req, res) => {
     const d = await datosEpisodio(req.body);
@@ -651,9 +652,9 @@ export function crearApp() {
 
   // ---------- Administración ----------
   // ---------- Formatos: TikTok, Instagram, Facebook y Prisma Plus ----------
-  const verFormato = (f) => ({ id: f.id, tipo: f.tipo, nombre: FORMATOS[f.tipo]?.nombre || f.tipo, grupo: FORMATOS[f.tipo]?.grupo, aspecto: FORMATOS[f.tipo]?.aspecto,
+  function verFormato(f) { return ({ id: f.id, tipo: f.tipo, nombre: FORMATOS[f.tipo]?.nombre || f.tipo, grupo: FORMATOS[f.tipo]?.grupo, aspecto: FORMATOS[f.tipo]?.aspecto,
     estado: f.estado, error: f.error, detalle: f.imagen?.detalle || null, key: f.imagen?.key || null, mini: f.imagen?.mini || null, textos: f.textos, creado: f.creado,
-    titulo: f.titulo, episodio_id: f.episodio_id, propuesta_id: f.propuesta_id });
+    titulo: f.titulo, episodio_id: f.episodio_id, propuesta_id: f.propuesta_id }); }
   app.get("/api/formatos/tipos", (req, res) => res.json(Object.entries(FORMATOS).map(([tipo, f]) => ({ tipo, nombre: f.nombre, grupo: f.grupo, aspecto: f.aspecto, ancho: f.ancho, alto: f.alto }))));
   app.get("/api/propuestas/:id/formatos", envolver(async (req, res) => {
     res.json((await all("SELECT * FROM formatos WHERE propuesta_id = $1 ORDER BY creado DESC LIMIT 40", [uuid(req.params.id)])).map(verFormato));

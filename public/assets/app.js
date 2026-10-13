@@ -334,7 +334,8 @@ function pintarLote(l) {
 // ================= EDITOR (un episodio) =================
 async function vistaEditor(id) {
   const t0 = navId;
-  const actores = await api("/api/actores");
+  const [actores, tipos] = await Promise.all([api("/api/actores"), tiposFormato ? tiposFormato : api("/api/formatos/tipos")]);
+  tiposFormato = tipos;
   const existente = id ? await api(`/api/episodios/${id}`) : null;
   if (!vigente(t0)) return;
   const borradorKey = "gancho-borrador";
@@ -381,14 +382,35 @@ async function vistaEditor(id) {
       h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cerrar")));
   }
 
-  const btnGenerar = h("button", { class: "btn primary big", type: "submit" }, existente?.propuestas?.length ? "Guardar y generar 3 nuevas" : "Generar 3 propuestas");
+  // ¿Para dónde es? YouTube hace 3 propuestas; las demás plataformas son una imagen cada una, sin pasar por YouTube.
+  const destinos = new Set(local.get("gancho-destinos") || ["youtube"]);
+  const btnGenerar = h("button", { class: "btn primary big", type: "submit" });
+  const costoDestinos = () => {
+    const imgs = (destinos.has("youtube") ? 3 : 0) + [...destinos].filter((d) => d !== "youtube").length;
+    const nombres = [...destinos].map((d) => (d === "youtube" ? "YouTube" : (tiposFormato.find((t) => t.tipo === d)?.nombre || d).split(" · ")[0]));
+    btnGenerar.disabled = !destinos.size;
+    btnGenerar.textContent = !destinos.size ? "Elige para dónde es" : `Crear ${nombres.length === 1 ? nombres[0] : `${nombres.length} portadas`} · ${imgs * (me.creditosPorImagen || 18)} créditos`;
+  };
+  const opcionDestino = (d, nombre, nota) => h("label", { class: "fmt-op" },
+    h("input", { type: "checkbox", checked: destinos.has(d), onchange: (e) => { e.target.checked ? destinos.add(d) : destinos.delete(d); local.set("gancho-destinos", [...destinos]); costoDestinos(); } }),
+    h("span", {}, h("b", {}, nombre), nota ? h("small", { class: "muted" }, ` ${nota}`) : null));
+  const pasoDestinos = h("section", { class: "panel stack" },
+    h("h2", {}, "3. ¿Para dónde es?"),
+    h("p", { class: "muted", style: { margin: 0 } }, "Marca solo lo que necesitas. Si no marcas YouTube, no se hace la portada de YouTube."),
+    h("div", { class: "fmt-grid" },
+      opcionDestino("youtube", "YouTube", "3 propuestas con título"),
+      tiposFormato.map((t) => opcionDestino(t.tipo, t.nombre.replace("Prisma Plus · ", "Prisma Plus: "), `${t.ancho}×${t.alto}`))));
+  costoDestinos();
   async function enviar(generarYa) {
     st.cast = st.cast.filter((c) => c.personaje?.trim());
     btnGenerar.disabled = true;
     try {
       const ep = existente ? await api(`/api/episodios/${existente.id}`, { method: "PUT", body: st }) : await api("/api/episodios", { method: "POST", body: st });
       local.del(borradorKey);
-      if (generarYa) await api(`/api/episodios/${ep.id}/generar`, { method: "POST" });
+      // Primero las de redes (el episodio todavía está libre) y después las 3 de YouTube.
+      const otros = [...destinos].filter((d) => d !== "youtube");
+      if (generarYa && otros.length) await api(`/api/episodios/${ep.id}/formatos`, { method: "POST", body: { tipos: otros } });
+      if (generarYa && destinos.has("youtube")) await api(`/api/episodios/${ep.id}/generar`, { method: "POST" });
       location.hash = `#/ep/${ep.id}`;
     } catch (e) { toast(e.message, true); btnGenerar.disabled = false; }
   }
@@ -408,6 +430,7 @@ async function vistaEditor(id) {
       h("p", { class: "muted", style: { margin: 0 } }, "Elige al actor de cada personaje para que la portada se parezca. Si no pones a nadie, Gancho inventa a los personajes."),
       me.refsPublicas ? null : h("div", { class: "aviso" }, "Modo local: Nano Banana no ve las fotos de los actores hasta publicar la app."),
       castBox),
+    pasoDestinos,
     h("details", { class: "panel" }, h("summary", { style: { cursor: "pointer", fontWeight: 600 } }, "Más detalles (opcional) · Gancho los deduce si los dejas vacíos"),
       h("div", { class: "stack", style: { marginTop: "14px" } },
         campo("momento", "La escena para la portada", "Si tienes una en mente.", true, "Ej. La mamá en el hospital descubre quién es su enfermero"),
@@ -466,7 +489,8 @@ async function vistaEpisodio(id, t = navId) {
   clearTimeout(poll);
   const json = JSON.stringify(p);
   if (json !== ultimoJSON && !editando) { ultimoJSON = json; pintarEpisodio(p); }
-  const ocupado = ["en_cola", "pensando", "procesando"].includes(p.estado) || p.eligiendo || p.propuestas.some(OCUPADA);
+  const ocupado = ["en_cola", "pensando", "procesando"].includes(p.estado) || p.eligiendo || p.propuestas.some(OCUPADA)
+    || (p.formatos || []).some((f) => ["en_cola", "generando"].includes(f.estado));
   if (ocupado) poll = setTimeout(() => vistaEpisodio(id, t).catch(() => { if (vigente(t)) poll = setTimeout(() => vistaEpisodio(id, t).catch(() => {}), 15000); }), document.hidden ? 15000 : 3000);
   else cargarMe().catch(() => {});
 }
@@ -539,7 +563,7 @@ function pintarEpisodio(p) {
       } }, "Reintentar el video") : h("a", { class: "btn primary", href: "#/auto" }, "Subir el video de nuevo")));
   } else if (p.estado === "error") {
     partes.push(h("div", { class: "vacio" }, h("h2", {}, "No se pudieron crear las propuestas"), h("p", { class: "muted" }, p.error || ""), h("button", { class: "btn primary", type: "button", onclick: generar }, "Intentar de nuevo")));
-  } else if (!p.propuestas.length) {
+  } else if (!p.propuestas.length && !(p.formatos || []).length) {
     partes.push(h("div", { class: "vacio" }, h("h2", {}, "¿Cómo quieres hacer la portada?"),
       h("div", { class: "row", style: { justifyContent: "center" } },
         h("button", { class: "btn primary big", type: "button", onclick: generar }, "Que Gancho haga 3 propuestas"),
@@ -553,7 +577,13 @@ function pintarEpisodio(p) {
       h("div", { class: "gancho" }, [["Transgresión", g.transgresion], ["Testigo / víctima", g.testigo], ["Objeto clave", g.objeto], ["Escenario", g.escenario], ["Final que se oculta", g.final_oculto]]
         .map(([k, v]) => h("div", {}, h("div", { class: "eyebrow" }, k), h("p", {}, v))))));
   }
+  if ((p.formatos || []).length) partes.push(h("section", { class: "stack", style: { marginBottom: "26px" } },
+    h("div", { class: "row", style: { justifyContent: "space-between" } }, h("h2", { style: { margin: 0 } }, "Redes y Prisma Plus"),
+      h("button", { class: "btn small", type: "button", onclick: () => vistaFormatos(p).catch((e) => toast(e.message, true)) }, "+ Más versiones")),
+    h("div", { class: "fmt-grid" }, p.formatos.map((f) => tarjetaFormato(f, recargar)))));
   if (p.propuestas.length && !pensando) partes.push(h("div", { class: "props" }, p.propuestas.map((x, i) => tarjeta(p, x, i, recargar))));
+  else if (!p.propuestas.length && (p.formatos || []).length && !pensando) partes.push(h("div", { class: "row" },
+    h("span", { class: "muted" }, "¿También quieres la portada de YouTube?"), h("button", { class: "btn small", type: "button", onclick: generar }, "Hacer 3 propuestas para YouTube")));
   if (p.eligiendo) partes.push(h("div", { class: "vacio", style: { marginTop: "24px" } }, h("div", { class: "spin" }), h("p", { class: "muted", style: { margin: 0 } }, "Escribiendo descripción, tags y títulos A/B…")));
   else if (p.paquete && p.elegida) partes.push(paqueteFinal(p));
   else if (p.elegida && p.error && !pensando) partes.push(h("div", { class: "probs", style: { marginTop: "24px" } }, `No se pudo escribir la descripción (${p.error}). Dale «Aprobar / regenerar textos» otra vez.`));
