@@ -185,8 +185,9 @@ dialog.zoom img { width: 100%; }
 .err { color: var(--bad); font-size: .88rem; min-height: 1.2em; }
 
 /* ---------- Navegación ---------- */
-.nav { display: flex; gap: 4px; flex-wrap: wrap; }
-.nav a { color: var(--muted); text-decoration: none; padding: 6px 12px; border-radius: 8px; font-weight: 600; font-size: .9rem; }
+.nav { display: flex; gap: 2px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; min-width: 0; }
+.nav::-webkit-scrollbar { display: none; }
+.nav a { white-space: nowrap; color: var(--muted); text-decoration: none; padding: 6px 10px; border-radius: 8px; font-weight: 600; font-size: .9rem; }
 .nav a:hover { color: var(--fg); background: var(--panel-2); }
 .nav a[aria-current=page] { color: var(--fg); background: var(--panel-2); }
 @media (max-width: 720px) { .nav { order: 3; width: 100%; } }
@@ -338,3 +339,6 @@ dialog.yt-ancho .in { grid-template-columns: minmax(0, 1fr); }
 .fmt-img { border-radius: 8px; overflow: hidden; background: var(--panel-2); display: grid; place-items: center; max-height: 380px; }
 .fmt-img img { width: 100%; height: 100%; object-fit: cover; cursor: zoom-in; display: block; }
 .fmt-op { display: flex; gap: 8px; align-items: center; cursor: pointer; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.campo-seg { display: grid; gap: 6px; }
+.campo-seg .etq { font-weight: 600; font-size: .9rem; }
+h1 { overflow-wrap: anywhere; }

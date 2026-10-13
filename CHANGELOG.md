@@ -1,5 +1,19 @@
 # Cambios de Gancho
 
+## 0.5.1 — 2026-10-13 · Más fácil de usar
+- Ya no aparece "null" en pantallas y ventanas con partes vacías.
+- Administrador: interruptor "Solo lo mío / Todo el equipo" en Inicio, Automático y Prisma Plus.
+- Inicio: botón principal "⬆ Subir video". Menú en una sola línea.
+- "3 propuestas nuevas" pide confirmación (muestra el costo) y no se puede usar mientras se pintan las actuales.
+- Lo que escribes en la descripción/tags ya no se borra con el refresco automático; si falla la descripción, se ve el aviso.
+- Regenerar textos editados a mano pide confirmación. En videos automáticos el botón dice "Aprobar esta". "Versiones" del historial ahora se llama "Anteriores".
+- Lote: no deja lanzar si no alcanzan los créditos.
+- Redes y Prisma Plus: el botón dice cuántas imágenes y créditos ("Crear 2 imágenes · 36 créditos"), no se puede mandar vacío ni dos veces, botón "Otra vez" si una falla, tiempo estimado.
+- Hacks: se ve dónde se cortó el 1er episodio (y si fue calculado); el minuto acepta "38", "38:20" o "1:05:30".
+- Subidas: aviso al cerrar la pestaña durante una subida y si ya hay otra en curso.
+- Descargas con nombre completo ("… - opcion 2", "… - TikTok") y aviso si fallan; "Sin conexión" en vez de errores técnicos.
+- Al hacer clic en el nombre de un campo ya no cambia la opción elegida. La duración del episodio es opcional.
+
 ## 0.5.0 — 2026-10-13
 ### Nuevo: versiones para redes y Prisma Plus
 - Botón **"✦ Redes y Prisma Plus"** en cada portada lista: TikTok/Reels 9:16 (estilo apps de series como DramaShorts/ReelShort, con título grande), Instagram 4:5, Facebook 1:1, y para **Prisma Plus** póster de película 2:3 y banner de la app 16:9 (fotorrealista, nivel cine, en 2K).

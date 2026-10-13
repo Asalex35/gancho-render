@@ -233,7 +233,7 @@ export function crearApp() {
       SELECT e.id, e.titulo, e.canal, e.estado, e.actualizado, e.creado_por, e.lote_id, e.elegida,
         (SELECT coalesce(p.imagen->>'mini', p.imagen->>'key') FROM propuestas p WHERE p.episodio_id = e.id AND NOT p.archivada AND p.imagen->>'estado' = 'lista'
          ORDER BY (p.id = e.elegida) DESC, p.slot LIMIT 1) AS portada
-      FROM episodios e WHERE e.lote_id IS NULL AND e.origen = 'manual' AND e.creado_por = $1 ORDER BY e.actualizado DESC LIMIT 60`, [req.usuario]);
+      FROM episodios e WHERE e.lote_id IS NULL AND e.origen = 'manual' AND (e.creado_por = $1 OR $2) ORDER BY e.actualizado DESC LIMIT 60`, [req.usuario, verTodo(req)]);
     res.json(filas);
   }));
   app.get("/api/episodios/:id", envolver(async (req, res) => {
@@ -326,7 +326,7 @@ export function crearApp() {
     if (!p?.imagen?.key) throw publico("No hay portada lista.", 404);
     const canal = await repo.canal(ep.canal);
     const buf = await portadaFinal(p.imagen.key, req.query.logo === "0" ? null : canal.logo_key);
-    res.set({ "Content-Type": "image/jpeg", "Content-Disposition": adjunto(ep.titulo, "jpg") }).send(buf);
+    res.set({ "Content-Type": "image/jpeg", "Content-Disposition": adjunto(ep.titulo, "jpg", req.query.propuesta ? `opcion ${p.slot + 1}` : "") }).send(buf);
   }));
 
   // ---------- Propuestas ----------
@@ -452,7 +452,7 @@ export function crearApp() {
     res.json(await all(`SELECT l.*, ${RESUMEN_LOTE},
         (SELECT count(*)::int FROM propuestas p JOIN episodios e2 ON e2.id = p.episodio_id
           WHERE e2.lote_id = l.id AND NOT p.archivada AND p.imagen->>'estado' = 'lista') AS imagenes_listas
-      FROM lotes l LEFT JOIN episodios e ON e.lote_id = l.id WHERE l.creado_por = $1 GROUP BY l.id ORDER BY l.creado DESC LIMIT 50`, [req.usuario]));
+      FROM lotes l LEFT JOIN episodios e ON e.lote_id = l.id WHERE (l.creado_por = $1 OR $2) GROUP BY l.id ORDER BY l.creado DESC LIMIT 50`, [req.usuario, verTodo(req)]));
   }));
   app.get("/api/lotes/:id", envolver(async (req, res) => {
     const id = uuid(req.params.id);
@@ -548,7 +548,7 @@ export function crearApp() {
           ORDER BY (p.id = e.elegida) DESC, coalesce((p.evaluacion->>'calificacion_final')::int, 0) DESC LIMIT 1) AS portada,
         (SELECT max(coalesce((p.evaluacion->>'calificacion_final')::int, (p.data->'calificacion'->>'total')::int)) FROM propuestas p
           WHERE p.episodio_id = e.id AND NOT p.archivada) AS mejor
-      FROM episodios e WHERE e.origen = 'auto' AND e.creado_por = $1 ORDER BY e.creado DESC LIMIT 100`, [req.usuario]));
+      FROM episodios e WHERE e.origen = 'auto' AND (e.creado_por = $1 OR $2) ORDER BY e.creado DESC LIMIT 100`, [req.usuario, verTodo(req)]));
   }));
 
   // 1) Pide dónde subir el video. Con R2/S3 el navegador sube directo al bucket.
@@ -601,8 +601,11 @@ export function crearApp() {
     const nombre = limpiar(req.body.nombreArchivo, 160);
     // Hack: "12:30", "12.5" o "12" (minutos) → segundos.
     const hack = req.body.hack === true;
-    const mmss = String(req.body.finPrimero ?? "").trim().match(/^(\d{1,3})(?::(\d{1,2}))?$|^(\d{1,3}\.\d+)$/);
-    const finPrimero = hack && mmss ? Math.round(mmss[3] ? Number(mmss[3]) * 60 : Number(mmss[1]) * 60 + Number(mmss[2] || 0)) || null : null;
+    // Acepta "38", "38.5" (minutos), "38:20" o "1:05:30".
+    const t = String(req.body.finPrimero ?? "").trim();
+    const partes = /^\d{1,3}(:\d{1,2}){0,2}$/.test(t) ? t.split(":").map(Number) : /^\d{1,3}\.\d+$/.test(t) ? [Number(t), 0] : null;
+    const seg = partes ? (partes.length === 3 ? partes[0] * 3600 + partes[1] * 60 + partes[2] : partes.length === 2 ? partes[0] * 60 + partes[1] : partes[0] * 60) : 0;
+    const finPrimero = hack && seg > 0 ? Math.round(seg) : null;
     const episodios = hack ? Math.min(6, Math.max(2, Number(req.body.episodios) || 3)) : null;
     const notasHack = hack ? "HACK: este video junta varios episodios. Portada y título SOLO de la primera historia; ignora las demás. " : "";
     let ep;
@@ -649,7 +652,7 @@ export function crearApp() {
     const spec = f && FORMATOS[f.tipo];
     if (!spec || f.estado !== "lista" || !f.imagen?.key) throw publico("Esa versión no está lista.", 404);
     const buf = await formatoFinal(f.imagen.key, spec.ancho, spec.alto);
-    res.set({ "Content-Type": "image/jpeg", "Content-Disposition": adjunto(`${f.titulo} - ${spec.nombre}`, "jpg") }).send(buf);
+    res.set({ "Content-Type": "image/jpeg", "Content-Disposition": adjunto(f.titulo, "jpg", spec.nombre) }).send(buf);
   }));
   app.delete("/api/formatos/:id", envolver(async (req, res) => {
     const f = await one("DELETE FROM formatos WHERE id = $1 AND estado IN ('lista','error') RETURNING imagen", [uuid(req.params.id)]);
@@ -660,7 +663,7 @@ export function crearApp() {
   // Prisma Plus: todos los pósters y banners de cine de este usuario.
   app.get("/api/prisma", envolver(async (req, res) => {
     const filas = await all(`SELECT f.*, e.titulo FROM formatos f JOIN episodios e ON e.id = f.episodio_id
-      WHERE f.creado_por = $1 AND f.tipo LIKE 'prisma_%' ORDER BY f.creado DESC LIMIT 120`, [req.usuario]);
+      WHERE (f.creado_por = $1 OR $2) AND f.tipo LIKE 'prisma_%' ORDER BY f.creado DESC LIMIT 120`, [req.usuario, verTodo(req)]);
     res.json(filas.map(verFormato));
   }));
 
@@ -810,8 +813,9 @@ function envolver(fn) {
 function publico(msg, status = 400) { return Object.assign(new Error(msg), { publico: true, status }); }
 function limpiar(s, max = 2000) { return String(s ?? "").replace(/[\u0000-\u0008\u000b-\u001f]/g, "").trim().slice(0, max); }
 function uuid(id) { if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id))) throw publico("No encontrado.", 404); return id; }
-function adjunto(nombre, ext) {
-  const limpio = archivoSeguro(nombre);
+// El sufijo (opción, plataforma) nunca se corta: así no se pisan los archivos al descargarlos.
+function adjunto(nombre, ext, sufijo = "") {
+  const limpio = `${archivoSeguro(nombre).slice(0, 45).trim()}${sufijo ? ` - ${archivoSeguro(sufijo)}` : ""}`;
   const ascii = limpio.replace(/[^\x20-\x7e]/g, "").trim() || "archivo";
   return `attachment; filename="${ascii}.${ext}"; filename*=UTF-8''${encodeURIComponent(limpio)}.${ext}`;
 }
@@ -820,6 +824,8 @@ const celda = (c) => { const t = String(c ?? ""); return `"${(/^[=+\-@\t\r]/.tes
 function archivoSeguro(s) { return String(s || "portada").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N} _-]/gu, "").trim().slice(0, 60) || "portada"; }
 
 // Reserva atómica del cupo diario: dos lotes simultáneos no pueden pasarse del límite.
+// Solo el administrador puede pedir ver lo de todo el equipo (?todos=1).
+const verTodo = (req) => req.user?.rol === "admin" && req.query.todos === "1";
 const subiendoVideo = new Set();
 function firmaSubida(key, usuario) {
   return crypto.createHmac("sha256", config.sessionSecret).update(`subida|${key}|${usuario}`).digest("base64url");

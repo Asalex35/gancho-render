@@ -2,6 +2,9 @@
 
 // ================= utilidades =================
 const $app = document.getElementById("app");
+// Pinta la vista ignorando partes vacías (null/false): replaceChildren las convertiría en el texto "null".
+const limpias = (k) => k.flat(Infinity).filter((x) => x != null && x !== false);
+const mostrar = (...k) => $app.replaceChildren(...limpias(k));
 function h(tag, props = {}, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(props || {})) {
@@ -18,7 +21,8 @@ async function api(path, { method = "GET", body, form } = {}) {
   const init = { method, headers: { "X-Gancho": "1" }, credentials: "same-origin" };
   if (form) init.body = form;
   else if (body !== undefined) { init.body = JSON.stringify(body); init.headers["Content-Type"] = "application/json"; }
-  const res = await fetch(path, init);
+  let res;
+  try { res = await fetch(path, init); } catch { throw new Error("Sin conexión. Revisa tu internet e intenta de nuevo."); }
   if (res.status === 401) { location.href = "/login"; throw new Error("Sesión expirada"); }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Algo falló. Intenta de nuevo.");
@@ -43,7 +47,7 @@ const local = {
 const modal = document.getElementById("modal");
 function abrirModal(...contenido) {
   modal.className = "";
-  document.getElementById("modal-in").replaceChildren(...contenido);
+  document.getElementById("modal-in").replaceChildren(...limpias(contenido));
   if (!modal.open) modal.showModal();
 }
 const cerrarModal = () => modal.close();
@@ -63,7 +67,16 @@ function seg(opciones, valor, alCambiar) {
   } }, txt)));
   return box;
 }
-function descargar(url) { const a = h("a", { href: url, download: "" }); document.body.append(a); a.click(); a.remove(); }
+async function descargar(url) {
+  try {
+    const res = await fetch(url, { credentials: "same-origin" });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "No se pudo descargar.");
+    const nombre = decodeURIComponent((res.headers.get("content-disposition") || "").match(/filename\*=UTF-8''([^;]+)/)?.[1] || "portada.jpg");
+    const blob = URL.createObjectURL(await res.blob());
+    const a = h("a", { href: blob, download: nombre }); document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(blob), 60e3);
+  } catch (e) { toast(e.message, true); }
+}
 
 const ROLES = { transgresor: "Transgresor", victima: "Víctima", testigo: "Testigo", villano: "Villano", otro: "Otro" };
 const RAZONES = {
@@ -116,20 +129,27 @@ async function ruta() {
     if (a === "prisma") return await vistaPrisma();
     return await vistaInicio();
   } catch (e) {
-    $app.replaceChildren(h("div", { class: "vacio" }, h("h2", {}, "No se pudo cargar"), h("p", { class: "muted" }, e.message), h("a", { class: "btn", href: "#/" }, "Volver")));
+    mostrar(h("div", { class: "vacio" }, h("h2", {}, "No se pudo cargar"), h("p", { class: "muted" }, e.message), h("a", { class: "btn", href: "#/" }, "Volver")));
   }
 }
 window.addEventListener("hashchange", ruta);
 
 // ================= INICIO =================
+const todoEquipo = () => me?.rol === "admin" && local.get("ver-todo") === true;
+const qTodo = () => (todoEquipo() ? "?todos=1" : "");
+// Interruptor del administrador: ver solo lo mío o lo de todo el equipo.
+function interruptorEquipo(recargar) {
+  if (me?.rol !== "admin") return null;
+  return seg({ mio: "Solo lo mío", todo: "Todo el equipo" }, todoEquipo() ? "todo" : "mio", (v) => { local.set("ver-todo", v === "todo"); recargar(); });
+}
 async function vistaInicio() {
   const t0 = navId;
-  const [lotes, eps] = await Promise.all([api("/api/lotes"), api("/api/episodios")]);
+  const [lotes, eps] = await Promise.all([api(`/api/lotes${qTodo()}`), api(`/api/episodios${qTodo()}`)]);
   if (!vigente(t0)) return;
   const estados = { borrador: ["Borrador", ""], en_cola: ["En cola", "warn"], pensando: ["Generando", "warn"], procesando: ["Viendo el video", "warn"], listo: ["Listo", "ok"], error: ["Con error", "bad"] };
-  $app.replaceChildren(
+  mostrar(
     h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Inicio"), h("h1", {}, "¿Qué estrenamos hoy?")),
-      h("div", { class: "row" }, h("a", { class: "btn big", href: "#/nuevo" }, "+ Un episodio"), h("a", { class: "btn primary big", href: "#/lote/nuevo" }, "+ Lote masivo"))),
+      h("div", { class: "row" }, interruptorEquipo(() => vistaInicio()), h("a", { class: "btn primary big", href: "#/auto" }, "⬆ Subir video"), h("a", { class: "btn big", href: "#/nuevo" }, "+ Un episodio"), h("a", { class: "btn big", href: "#/lote/nuevo" }, "+ Lote masivo"))),
     lotes.length ? h("section", { class: "stack", style: { marginBottom: "34px" } }, h("h2", {}, "Lotes"), h("div", { class: "lotes" }, lotes.map(tarjetaLote))) : null,
     h("section", { class: "stack" }, h("h2", {}, "Episodios sueltos"),
       eps.length
@@ -193,7 +213,7 @@ async function vistaLoteNuevo() {
     const creditos = imagenes * me.creditosPorImagen;
     const alcanza = me.creditos == null || me.creditos >= creditos;
     const quedanHoy = me.limites.userDailyImages - me.uso.imagenes;
-    const lanzar = h("button", { class: "btn primary big", type: "button", disabled: !validas.length || Boolean(r.aviso), onclick: async (e) => {
+    const lanzar = h("button", { class: "btn primary big", type: "button", disabled: !validas.length || Boolean(r.aviso) || !alcanza, onclick: async (e) => {
       const b = e.currentTarget; b.disabled = true;
       try {
         const l = await api("/api/lotes", { method: "POST", body: { ...st, texto: texto.value } });
@@ -207,8 +227,8 @@ async function vistaLoteNuevo() {
         h("div", { class: `kpi${alcanza ? "" : " alerta"}` }, h("span", { class: "muted" }, "Créditos estimados"), h("b", {}, `≈ ${creditos}`),
           h("span", { class: "muted", style: { fontSize: ".78rem" } }, alcanza ? `Tienes ${me.creditos ?? "?"}` : `Solo tienes ${me.creditos}. Recarga antes.`)),
         h("div", { class: `kpi${quedanHoy < imagenes ? " alerta" : ""}` }, h("span", { class: "muted" }, "Te quedan hoy"), h("b", {}, quedanHoy), h("span", { class: "muted", style: { fontSize: ".78rem" } }, "portadas"))),
-      r.aviso ? h("div", { class: "aviso" }, r.aviso) : null,
-      r.desconocidas?.length ? h("div", { class: "aviso" }, `Ignoré estas columnas: ${r.desconocidas.join(", ")}`) : null,
+      r.aviso ? h("div", { class: "aviso" }, r.aviso) : "",
+      r.desconocidas?.length ? h("div", { class: "aviso" }, `Ignoré estas columnas: ${r.desconocidas.join(", ")}`) : "",
       h("div", { class: "tw" }, h("table", {},
         h("thead", {}, h("tr", {}, ["Fila", "Episodio", "Actores", "Revisión"].map((t) => h("th", {}, t)))),
         h("tbody", {}, r.filas.map((f) => h("tr", { class: f.errores.length ? "malo" : "" },
@@ -220,7 +240,7 @@ async function vistaLoteNuevo() {
     resultado.scrollIntoView({ behavior: "smooth" });
   }
 
-  $app.replaceChildren(
+  mostrar(
     h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Lote masivo"), h("h1", {}, "Muchos episodios de una vez")),
       h("a", { class: "btn", href: "/api/plantilla.csv" }, "Descargar plantilla")),
     h("div", { class: "grid2" },
@@ -232,8 +252,8 @@ async function vistaLoteNuevo() {
       h("section", { class: "panel stack" },
         h("h2", {}, "2. Ajustes"),
         h("label", {}, "Nombre del lote", nombre),
-        h("label", {}, "Canal", seg(opcionesCanal(), st.canal, (v) => { st.canal = v; guardar(); })),
-        h("label", {}, "Modelo de imagen", seg(me.modelos, st.modelo, (v) => { st.modelo = v; guardar(); })),
+        h("div", { class: "campo-seg" }, h("span", { class: "etq" }, "Canal"), seg(opcionesCanal(), st.canal, (v) => { st.canal = v; guardar(); })),
+        h("div", { class: "campo-seg" }, h("span", { class: "etq" }, "Modelo de imagen"), seg(me.modelos, st.modelo, (v) => { st.modelo = v; guardar(); })),
         h("label", { class: "switch" }, auto, h("span", {}, "Elegir la mejor automáticamente", h("br"), h("span", { class: "hint" }, "Gancho elige la de mayor calificación y escribe la descripción. Tú solo revisas y cambias las que no te gusten."))),
         me.refsPublicas ? null : h("div", { class: "aviso" }, "Modo local: Nano Banana no ve las fotos de los actores hasta publicar la app."),
         h("button", { class: "btn primary big", type: "button", onclick: revisar }, "Revisar lista"))),
@@ -290,7 +310,7 @@ function pintarLote(l) {
       h("div", { class: "minis" }, ops));
   };
 
-  $app.replaceChildren(
+  mostrar(
     h("div", { class: "head" },
       h("div", { class: "stack", style: { gap: "6px" } }, h("div", { class: "eyebrow" }, `Lote · ${canalNombre(l.canal)}`), h("h1", {}, l.nombre),
         h("div", { class: "cifras" }, h("span", {}, h("b", {}, l.elegidos), ` de ${l.total} listos`), l.pensando ? h("span", {}, h("b", {}, l.pensando), " generando") : null,
@@ -361,7 +381,6 @@ async function vistaEditor(id) {
 
   const btnGenerar = h("button", { class: "btn primary big", type: "submit" }, existente?.propuestas?.length ? "Guardar y generar 3 nuevas" : "Generar 3 propuestas");
   async function enviar(generarYa) {
-    if (!st.duracion_min) return toast("Escribe cuánto dura el episodio (en minutos).", true);
     st.cast = st.cast.filter((c) => c.personaje?.trim());
     btnGenerar.disabled = true;
     try {
@@ -373,14 +392,14 @@ async function vistaEditor(id) {
   }
 
   pintarCast();
-  $app.replaceChildren(h("form", { class: "stack", style: { gap: "22px" }, onsubmit: (e) => { e.preventDefault(); enviar(true); } },
+  mostrar(h("form", { class: "stack", style: { gap: "22px" }, onsubmit: (e) => { e.preventDefault(); enviar(true); } },
     h("div", { class: "head", style: { marginBottom: 0 } },
       h("div", {}, h("div", { class: "eyebrow" }, existente ? "Editar episodio" : "Nuevo episodio"), h("h1", {}, existente ? existente.titulo : "Cuéntame la historia")),
       h("a", { class: "btn ghost", href: existente ? `#/ep/${existente.id}` : "#/" }, "Cancelar")),
     h("div", { class: "grid2" },
       h("section", { class: "panel stack" },
         h("h2", {}, "1. La historia"),
-        h("label", {}, "Canal", seg(opcionesCanal(), st.canal, (v) => { st.canal = v; guardarBorrador(); })),
+        h("div", { class: "campo-seg" }, h("span", { class: "etq" }, "Canal"), seg(opcionesCanal(), st.canal, (v) => { st.canal = v; guardarBorrador(); })),
         campo("titulo", "Nombre interno", "Solo para encontrarlo aquí. No es el título de YouTube.", false, "Ej. La boda de Lucía"),
         (() => {
           const el = h("input", { type: "number", id: "f-duracion", min: "1", max: "600", step: "1", placeholder: "Ej. 45", style: { maxWidth: "160px" } });
@@ -395,7 +414,7 @@ async function vistaEditor(id) {
         campo("desenlace", "Cómo termina", "Gancho lo usa para entender la historia, pero nunca lo revela.", true),
         campo("escenario", "Escenario principal", null, false, "Iglesia, camión, escuela, mansión…"),
         campo("notas", "Notas para Gancho", "Ej. evitar armas, la protagonista siempre de rojo.", true),
-        h("label", {}, "Modelo de imagen", seg(me.modelos, st.modelo, (v) => { st.modelo = v; guardarBorrador(); }), h("span", { class: "hint" }, "Nano Banana 2 es más rápido. Pro respeta mejor varias caras a la vez."))),
+        h("div", { class: "campo-seg" }, h("span", { class: "etq" }, "Modelo de imagen"), seg(me.modelos, st.modelo, (v) => { st.modelo = v; guardarBorrador(); }), h("span", { class: "hint" }, "Nano Banana 2 es más rápido. Pro respeta mejor varias caras a la vez."))),
       h("section", { class: "panel stack" },
         h("h2", {}, "2. El cast"),
         h("p", { class: "muted", style: { margin: 0 } }, "Si lo dejas vacío, Claude arma los personajes desde la sinopsis (sin caras reales)."),
@@ -482,12 +501,18 @@ function pintarEpisodio(p) {
       chipIdioma(canalIdioma(p.canal)),
       p.brief?.duracion_min ? h("span", { class: `tag${p.brief.duracion_min > 120 ? " warn" : ""}`, title: p.brief.duracion_min > 120 ? "Más de 2 h: YouTube no hace el doblaje automático" : "" },
         `${p.brief.duracion_min} min${p.brief.duracion_min > 120 ? " · sin doblaje automático" : ""}`) : null,
+      // Hack: dónde se cortó el 1er episodio (si fue estimado, conviene revisarlo).
+      p.video?.hack && p.video?.corte ? h("span", { class: `tag${p.video.corte.metodo === "estimado" ? " warn" : ""}`,
+        title: p.video.corte.metodo === "estimado" ? "No se encontró el corte: se calculó dividiendo el video. Si está mal, súbelo con el minuto exacto." : "Corte detectado en el video" },
+        `Hack · el 1º termina en ${Math.floor(p.video.corte.seg / 60)}:${String(Math.round(p.video.corte.seg % 60)).padStart(2, "0")}${p.video.corte.metodo === "estimado" ? " (calculado, revísalo)" : ""}`) : null,
       p.aprobacion === "auto" ? h("span", { class: "tag ok" }, "Aprobada sola") : p.aprobacion === "por_aprobar" && !p.elegida ? h("span", { class: "tag warn" }, "Por aprobar") : null),
       h("h1", {}, p.titulo)),
     h("div", { class: "row" },
       h("a", { class: "btn", href: `#/ep/${p.id}/editar` }, "Editar historia y cast"),
       h("button", { class: "btn", type: "button", disabled: pensando, onclick: () => subirPortadaPropia(p, recargar) }, "Subir mi portada"),
-      p.propuestas.length ? h("button", { class: "btn", type: "button", disabled: pensando, onclick: generar }, "3 propuestas nuevas") : null,
+      p.propuestas.length ? h("button", { class: "btn", type: "button", disabled: pensando || p.propuestas.some(OCUPADA) || p.eligiendo,
+        title: p.propuestas.some(OCUPADA) ? "Espera a que terminen las portadas actuales" : "",
+        onclick: () => confirmar("¿Hacer 3 propuestas nuevas?", `Las actuales se guardan en el historial y se borra la descripción. Cuesta ≈${3 * (me.creditosPorImagen || 18)} créditos.`, generar, "Sí, hacer 3 nuevas") }, "3 propuestas nuevas") : null,
       h("button", { class: "btn ghost danger", type: "button", onclick: () => confirmar("¿Borrar este episodio?", "Se borran las portadas y versiones. No se puede deshacer.",
         async () => { await api(`/api/episodios/${p.id}`, { method: "DELETE" }); location.hash = p.lote_id ? `#/lote/${p.lote_id}` : "#/"; }, "Sí, borrar") }, "Borrar")))];
 
@@ -501,7 +526,7 @@ function pintarEpisodio(p) {
       h("p", { class: "muted", style: { margin: 0 } }, "Saca cuadros, escucha el audio y escribe la historia. Un episodio de 40 min tarda unos minutos.")));
   } else if (pensando) {
     partes.push(h("div", { class: "vacio" }, h("div", { class: "spin" }), h("h2", {}, p.estado === "en_cola" ? "En la fila" : "Claude está leyendo la historia"),
-      h("p", { class: "muted", style: { margin: 0 } }, p.estado === "en_cola" ? "Empieza en cuanto se libere un lugar." : "Arma 3 propuestas en alrededor de un minuto; después las portadas se pintan solas.")));
+      h("p", { class: "muted", style: { margin: 0 } }, p.estado === "en_cola" ? "Empieza en cuanto se libere un lugar." : "Arma 3 propuestas en alrededor de un minuto; después las portadas se pintan solas. Puedes salir de esta página: Gancho sigue trabajando.")));
   } else if (p.estado === "error" && p.origen === "auto" && p.video?.etapa === "error") {
     partes.push(h("div", { class: "vacio" }, h("h2", {}, "No se pudo leer el video"), h("p", { class: "muted" }, p.error || ""),
       p.video?.key ? h("button", { class: "btn primary", type: "button", onclick: async (e) => {
@@ -525,7 +550,8 @@ function pintarEpisodio(p) {
   if (p.propuestas.length && !pensando) partes.push(h("div", { class: "props" }, p.propuestas.map((x, i) => tarjeta(p, x, i, recargar))));
   if (p.eligiendo) partes.push(h("div", { class: "vacio", style: { marginTop: "24px" } }, h("div", { class: "spin" }), h("p", { class: "muted", style: { margin: 0 } }, "Escribiendo descripción, tags y títulos A/B…")));
   else if (p.paquete && p.elegida) partes.push(paqueteFinal(p));
-  $app.replaceChildren(...partes);
+  else if (p.elegida && p.error && !pensando) partes.push(h("div", { class: "probs", style: { marginTop: "24px" } }, `No se pudo escribir la descripción (${p.error}). Dale «Aprobar / regenerar textos» otra vez.`));
+  mostrar(...partes);
 }
 
 function tarjeta(p, x, i, recargar) {
@@ -600,10 +626,15 @@ function tarjeta(p, x, i, recargar) {
       img.estado === "lista" ? h("button", { class: "btn ghost full", type: "button", onclick: () => vistaFormatos(p, x).catch((e) => toast(e.message, true)) }, "✦ Redes y Prisma Plus") : null,
       h("div", { class: "acciones" },
         h("button", { class: `btn ${elegida ? "" : "primary"} full`, type: "button", disabled: img.estado !== "lista" || OCUPADA(x) || p.eligiendo,
-          onclick: async (e) => { const b = e.currentTarget; b.disabled = true; try { await api(`/api/propuestas/${x.id}/elegir`, { method: "POST" }); recargar(); } catch (er) { toast(er.message, true); b.disabled = false; } } },
-          elegida ? "✓ Elegida · regenerar textos" : "Elegir esta"),
+          onclick: (e) => {
+            const b = e.currentTarget;
+            const elegir = async () => { b.disabled = true; try { await api(`/api/propuestas/${x.id}/elegir`, { method: "POST" }); recargar(); } catch (er) { toast(er.message, true); b.disabled = false; } };
+            if (elegida && p.paquete?.editadoAMano) return confirmar("¿Regenerar los textos?", "Se reemplaza la descripción y los tags que editaste a mano.", elegir, "Sí, regenerar");
+            elegir();
+          } },
+          elegida ? "✓ Elegida · regenerar textos" : p.origen === "auto" ? "Aprobar esta" : "Elegir esta"),
         h("button", { class: "btn", type: "button", disabled: OCUPADA(x) || p.eligiendo, onclick: () => rehacer(x, recargar) }, x.rehaciendo ? "Rehaciendo…" : "Rehacer"),
-        h("button", { class: "btn", type: "button", disabled: !x.nVersiones || OCUPADA(x) || p.eligiendo, onclick: () => versiones(x, recargar) }, `Versiones${x.nVersiones ? ` (${x.nVersiones})` : ""}`)),
+        h("button", { class: "btn", type: "button", disabled: !x.nVersiones || OCUPADA(x) || p.eligiendo, onclick: () => versiones(x, recargar) }, `Anteriores${x.nVersiones ? ` (${x.nVersiones})` : ""}`)),
       h("details", {}, h("summary", { class: "eyebrow", style: { cursor: "pointer" } }, "Más detalles"),
         h("div", { class: "stack", style: { marginTop: "10px", gap: "10px" } }, movil,
           ev?.problemas?.length ? h("div", { class: "risk" }, h("b", {}, "Para mejorar: "), ev.problemas.slice(0, 2).join(" · ")) : null,
@@ -716,7 +747,7 @@ function tarjetaFormato(f, recargar) {
   return h("div", { class: "fmt" },
     h("div", { class: `fmt-img${ocupado ? " shimmer" : ""}`, style: { aspectRatio: `${aw} / ${ah}` } },
       f.estado === "lista" ? h("img", { src: mediaFormato(f), alt: f.nombre, loading: "lazy", onclick: () => verGrande(media(f.key)) })
-        : ocupado ? h("div", { class: "estado" }, h("div", { class: "spin" }), "Pintando…")
+        : ocupado ? h("div", { class: "estado" }, h("div", { class: "spin" }), "Pintando…", h("small", {}, "1 a 3 min"))
         : h("div", { class: "estado" }, h("b", { style: { color: "var(--bad)" } }, f.error || "Falló"))),
     h("div", { class: "stack", style: { gap: "4px" } },
       h("b", { style: { fontSize: ".85rem" } }, f.nombre),
@@ -724,6 +755,9 @@ function tarjetaFormato(f, recargar) {
       f.titulo ? h("a", { href: `#/ep/${f.episodio_id}`, class: "muted", style: { fontSize: ".75rem" } }, f.titulo) : null),
     h("div", { class: "row", style: { gap: "6px" } },
       f.estado === "lista" ? h("button", { class: "btn small", type: "button", onclick: () => descargar(`/api/formatos/${f.id}/descargar`) }, "⬇ Descargar") : null,
+      f.estado === "error" ? h("button", { class: "btn small", type: "button", onclick: async () => {
+        try { await api(`/api/propuestas/${f.propuesta_id}/formatos`, { method: "POST", body: { tipos: [f.tipo] } }); toast("Pintando otra vez…"); recargar(); } catch (e) { toast(e.message, true); }
+      } }, "Otra vez") : null,
       !ocupado ? h("button", { class: "btn small ghost danger", type: "button", onclick: async () => {
         try { await api(`/api/formatos/${f.id}`, { method: "DELETE" }); recargar(); } catch (e) { toast(e.message, true); }
       } }, "Borrar") : null));
@@ -744,24 +778,29 @@ async function vistaFormatos(p, x) {
   const casilla = (tf) => h("label", { class: "fmt-op" },
     h("input", { type: "checkbox", checked: elegidos.has(tf.tipo), onchange: (e) => { e.target.checked ? elegidos.add(tf.tipo) : elegidos.delete(tf.tipo); local.set("fmt-elegidos", [...elegidos]); costo(); } }),
     h("span", {}, h("b", {}, tf.nombre), h("small", { class: "muted" }, ` ${tf.ancho}×${tf.alto}`)));
-  const costoEl = h("span", { class: "muted", style: { fontSize: ".85rem" } });
-  const costo = () => { costoEl.textContent = elegidos.size ? `${elegidos.size} imagen${elegidos.size > 1 ? "es" : ""} · ${elegidos.size * (me.creditosPorImagen || 18)} créditos` : ""; };
+  const costoEl = h("span", { class: "muted", style: { fontSize: ".85rem" } }, "Puedes cerrar esta ventana: Gancho sigue pintando.");
+  const crear = h("button", { class: "btn primary", type: "button" });
+  const costo = () => {
+    crear.disabled = !elegidos.size;
+    crear.textContent = elegidos.size ? `Crear ${elegidos.size} imagen${elegidos.size > 1 ? "es" : ""} · ${elegidos.size * (me.creditosPorImagen || 18)} créditos` : "Elige al menos una";
+  };
   costo();
   const grupo = (g, titulo, nota) => h("div", { class: "stack", style: { gap: "6px" } }, h("div", { class: "eyebrow" }, titulo),
     nota ? h("span", { class: "muted", style: { fontSize: ".8rem" } }, nota) : null, tiposFormato.filter((tf) => tf.grupo === g).map(casilla));
-  abrirModal(h("h2", {}, "Versiones para redes y Prisma Plus"),
+  crear.addEventListener("click", async () => {
+    crear.disabled = true;
+    try { await api(`/api/propuestas/${x.id}/formatos`, { method: "POST", body: { tipos: [...elegidos] } }); toast("Pintando… tardan 1 a 3 minutos"); await recargar(); }
+    catch (er) { toast(er.message, true); }
+    costo();
+  });
+  abrirModal(h("h2", {}, "Redes y Prisma Plus"),
     h("p", { class: "muted", style: { margin: 0 } }, `Misma historia y mismos actores que “${x.titulo}”, rediseñada para cada plataforma.`),
     h("div", { class: "grid2" },
-      grupo("redes", "Redes", "TikTok con título grande al estilo de las apps de series."),
+      grupo("redes", "Redes", "TikTok con título grande (estilo apps de series), Instagram y Facebook."),
       grupo("prisma", "Prisma Plus", "Póster de cine y banner para la app: fotorrealista, nivel película.")),
     h("div", { class: "row", style: { justifyContent: "space-between" } }, costoEl,
-      h("button", { class: "btn primary", type: "button", onclick: async (e) => {
-        const b = e.currentTarget; b.disabled = true;
-        try { await api(`/api/propuestas/${x.id}/formatos`, { method: "POST", body: { tipos: [...elegidos] } }); toast("Pintando versiones…"); await recargar(); }
-        catch (er) { toast(er.message, true); }
-        b.disabled = false;
-      } }, "Crear versiones")),
-    h("div", { class: "eyebrow" }, "Versiones de esta portada"), galeria,
+      crear),
+    h("div", { class: "eyebrow" }, "Imágenes de esta portada"), galeria,
     h("div", { class: "foot" }, h("button", { class: "btn", type: "button", onclick: cerrarModal }, "Cerrar")));
   modal.classList.add("yt-ancho");
   await recargar();
@@ -773,15 +812,15 @@ async function vistaPrisma() {
   const caja = h("div", { class: "fmt-grid grande" }, h("div", { class: "vacio" }, h("div", { class: "spin" })));
   const recargar = async () => {
     if (!vigente(t)) return;
-    const lista = await api("/api/prisma");
+    const lista = await api(`/api/prisma${qTodo()}`);
     if (!vigente(t)) return;
     caja.replaceChildren(...(lista.length ? lista.map((f) => tarjetaFormato(f, recargar))
       : [h("div", { class: "vacio" }, h("h2", {}, "Todavía no hay pósters"), h("p", { class: "muted", style: { margin: 0 } },
           "Abre un episodio, en la portada elige “✦ Redes y Prisma Plus” y marca Póster o Banner."))]));
     if (lista.some((f) => ["en_cola", "generando"].includes(f.estado))) poll = setTimeout(recargar, 5000);
   };
-  $app.replaceChildren(
-    h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Prisma Plus"), h("h1", {}, "Pósters y banners de cine para la app"))),
+  mostrar(
+    h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Prisma Plus"), h("h1", {}, "Pósters y banners de cine para la app")), interruptorEquipo(() => vistaPrisma())),
     caja);
   await recargar();
 }
@@ -807,7 +846,7 @@ function rehacer(x, recargar) {
   pintarChips();
   abrirModal(h("h2", {}, "¿Qué no te gustó?"), h("p", { class: "muted", style: { margin: 0 } }, `"${x.titulo}"`),
     x.propia ? h("p", { class: "muted", style: { margin: 0 } }, "Esta portada la subió el equipo: Gancho solo rehace el título.")
-      : h("label", {}, "¿Qué rehago?", seg({ portada: "La portada", titulo: "El título", ambos: "Las dos" }, st.objetivo, (v) => { st.objetivo = v; pintarChips(); })),
+      : h("div", { class: "campo-seg" }, h("span", { class: "etq" }, "¿Qué rehago?"), seg({ portada: "La portada", titulo: "El título", ambos: "Las dos" }, st.objetivo, (v) => { st.objetivo = v; pintarChips(); })),
     h("div", { class: "stack", style: { gap: "8px" } }, h("b", { style: { fontSize: ".88rem" } }, "¿Por qué?"), chips),
     h("label", {}, "¿Qué cambiarías?", h("span", { class: "hint" }, "Entre más concreto, mejor sale la siguiente."), comentario),
     h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cancelar"), btn));
@@ -838,7 +877,7 @@ function paqueteFinal(p) {
     if (editable) {
       el = h("textarea", { id: `paq-${editable}`, style: { minHeight: editable === "descripcion" ? "160px" : "70px" } });
       el.value = valor;
-      el.addEventListener("input", () => { guardarBtn.disabled = false; });
+      el.addEventListener("input", () => { guardarBtn.disabled = false; editando = true; });
       campos[editable] = el;
     }
     return h("div", { class: "copybox" },
@@ -850,7 +889,7 @@ function paqueteFinal(p) {
     guardarBtn.disabled = true;
     try {
       await api(`/api/episodios/${p.id}/paquete`, { method: "PUT", body: { descripcion: campos.descripcion.value, tags: campos.tags.value, hashtags: campos.hashtags.value } });
-      toast("Cambios guardados");
+      toast("Cambios guardados"); editando = false;
     } catch (e) { toast(e.message, true); guardarBtn.disabled = false; }
   } }, "Guardar cambios");
   const tieneLogo = me.canales.find((c) => c.id === p.canal)?.logo;
@@ -903,7 +942,7 @@ async function vistaActores() {
         h("button", { class: "btn small ghost danger", type: "button", onclick: () => confirmar(`¿Borrar a ${a.nombre}?`, "Se borran sus fotos. Los episodios ya hechos no cambian.",
           async () => { await api(`/api/actores/${a.id}`, { method: "DELETE" }); recargar(); }, "Sí, borrar") }, "Borrar")));
   };
-  $app.replaceChildren(
+  mostrar(
     h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Biblioteca"), h("h1", {}, "Actores")),
       h("button", { class: "btn primary big", type: "button", onclick: () => abrirModal(formNuevoActor(() => { cerrarModal(); recargar(); }),
         h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cerrar"))) }, "+ Actor")),
@@ -927,7 +966,7 @@ async function vistaAdmin() {
     const c = h("input", { type: "password", placeholder: "mínimo 10 caracteres", id: "nu-clave", autocomplete: "new-password" });
     let rol = "editor";
     abrirModal(h("h2", {}, "Nuevo usuario"), h("label", {}, "Usuario", u), h("label", {}, "Contraseña", c),
-      h("label", {}, "Rol", seg({ editor: "Editor", admin: "Administrador" }, rol, (v) => (rol = v))),
+      h("div", { class: "campo-seg" }, h("span", { class: "etq" }, "Rol"), seg({ editor: "Editor", admin: "Administrador" }, rol, (v) => (rol = v))),
       h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cancelar"),
         h("button", { class: "btn primary", type: "button", onclick: async () => {
           try { await api("/api/admin/usuarios", { method: "POST", body: { usuario: u.value, clave: c.value, rol } }); cerrarModal(); toast("Usuario creado"); recargar(); } catch (e) { toast(e.message, true); }
@@ -941,7 +980,7 @@ async function vistaAdmin() {
           try { await api(`/api/admin/usuarios/${usr.id}`, { method: "PATCH", body: { clave: c.value } }); cerrarModal(); toast("Contraseña cambiada"); } catch (e) { toast(e.message, true); }
         } }, "Guardar")));
   };
-  $app.replaceChildren(
+  mostrar(
     h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Administración"), h("h1", {}, "Equipo y gasto"))),
     h("div", { class: "kpis", style: { marginBottom: "28px" } },
       h("div", { class: `kpi${portadasQueAlcanzan != null && portadasQueAlcanzan < 30 ? " alerta" : ""}` }, h("span", { class: "muted" }, "Créditos Nano Banana"), h("b", {}, uso.creditos ?? "?"),
@@ -981,6 +1020,8 @@ function pasosVideo(etapa) {
 }
 
 let subiendo = null;
+// Cerrar o recargar la pestaña mataría una subida de varios GB.
+window.addEventListener("beforeunload", (e) => { if (subiendo) { e.preventDefault(); e.returnValue = ""; } });
 // Los subtítulos elegidos viven fuera de la vista: el refresco de la lista no los borra.
 let subAuto = { texto: null, nombre: "" };
 async function vistaAuto() {
@@ -1009,7 +1050,8 @@ async function vistaAuto() {
   const listaBox = h("div", {}, h("div", { class: "vacio" }, h("div", { class: "spin" })));
 
   async function subir(files) {
-    if (!files.length || subiendo) return;
+    if (subiendo) return toast("Espera a que termine la subida actual.", true);
+    if (!files.length) return;
     if (!st.canal) return toast("Elige el canal.", true);
     subiendo = true;
     let ok = 0;
@@ -1063,7 +1105,7 @@ async function vistaAuto() {
   async function refrescar() {
     clearTimeout(poll);
     let lista;
-    try { lista = await api("/api/auto"); }
+    try { lista = await api(`/api/auto${qTodo()}`); }
     catch { if (vigente(t)) poll = setTimeout(refrescar, 15000); return; }
     if (!vigente(t)) return;
     listaBox.replaceChildren(lista.length ? h("div", { class: "cola" }, lista.map((e) => h("a", { class: "item", href: `#/ep/${e.id}` },
@@ -1079,13 +1121,13 @@ async function vistaAuto() {
     if (ocupado) poll = setTimeout(refrescar, 6000);
   }
 
-  $app.replaceChildren(
+  mostrar(
     h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Automático"), h("h1", {}, "Sube el video, Gancho hace el resto")),
-      h("a", { class: "btn", href: "#/canales" }, "Reglas por canal")),
+      h("div", { class: "row" }, interruptorEquipo(() => vistaAuto()), h("a", { class: "btn", href: "#/canales" }, "Reglas por canal"))),
     h("div", { class: "grid2", style: { marginBottom: "28px" } },
       zona,
       h("section", { class: "panel stack" },
-        h("label", {}, "Canal", seg(opcionesCanal(), st.canal, (v) => { st.canal = v; guardar(); })),
+        h("div", { class: "campo-seg" }, h("span", { class: "etq" }, "Canal"), seg(opcionesCanal(), st.canal, (v) => { st.canal = v; guardar(); })),
         h("div", { class: "row" }, h("button", { class: "btn small", type: "button", onclick: () => sub.click() }, "Subtítulos o guion"), sub, subTxt),
         notas, hack, detallesHack,
         h("p", { class: "muted", style: { margin: 0, fontSize: ".85rem" } }, "Gancho saca cuadros del video, entiende la historia, toma las caras de los actores y hace 3 portadas. Si el canal tiene aprobación automática y la mejor pasa la calificación, queda lista sola; si no, te avisa para que la apruebes."))),
@@ -1101,7 +1143,7 @@ async function vistaCanales() {
   if (!vigente(t0)) return;
   const admin = me.rol === "admin";
   const recargar = async () => { me = null; await cargarMe(); vistaCanales(); };
-  $app.replaceChildren(
+  mostrar(
     h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Canales"), h("h1", {}, `${canales.length} canales`)),
       admin ? h("button", { class: "btn primary big", type: "button", onclick: () => editarCanal(null, recargar) }, "+ Canal") : null),
     h("p", { class: "muted", style: { marginTop: 0 } }, "Cada canal tiene su idioma, su voz y sus reglas. Gancho escribe títulos, descripciones y tags en el idioma del canal y te muestra la traducción al español."),
@@ -1145,7 +1187,7 @@ function editarCanal(cn, recargar) {
     h("h2", {}, cn ? `Canal: ${cn.nombre}` : "Nuevo canal"),
     h("div", { class: "form-canal" },
       h("div", { class: "dos" }, f("nombre", "Nombre"), cn ? h("label", {}, "Código", h("input", { type: "text", value: cn.id, disabled: true })) : f("id", "Código", { hint: "Corto, sin espacios. Ej. CLAC_PT", ph: "CLAC_EN" })),
-      h("div", { class: "dos" }, h("label", {}, "Idioma", seg(me.idiomas, st.idioma, (v) => (st.idioma = v))), f("pais", "País del público", { ph: "México, Estados Unidos, Brasil…" })),
+      h("div", { class: "dos" }, h("div", { class: "campo-seg" }, h("span", { class: "etq" }, "Idioma"), seg(me.idiomas, st.idioma, (v) => (st.idioma = v))), f("pais", "País del público", { ph: "México, Estados Unidos, Brasil…" })),
       f("ejemplos", "Títulos que le han funcionado", { area: true, hint: "Uno por línea, en el idioma del canal. Gancho los usa como ejemplo." }),
       h("div", {}, sugerir),
       f("voz", "Voz de los títulos", { area: true, hint: "Ej. Primera persona, confesión, traición doble." }),
@@ -1153,8 +1195,8 @@ function editarCanal(cn, recargar) {
       f("descripcion_fija", "Texto fijo de la descripción", { area: true }),
       f("disclaimer", "Disclaimer", { area: true }),
       h("div", { class: "dos" }, f("hashtags", "Hashtags fijos", { hint: "Separados por espacio" }), f("tags_base", "Tags base", { hint: "Separados por coma" })),
-      h("label", {}, "Modelo de imagen", seg(me.modelos, st.modelo, (v) => (st.modelo = v))),
-      h("label", {}, "Aprobación automática", seg({ "": "Siempre preguntar", 80: "Desde 80", 85: "Desde 85", 90: "Desde 90" }, String(st.auto_aprobar), (v) => (st.auto_aprobar = v)),
+      h("div", { class: "campo-seg" }, h("span", { class: "etq" }, "Modelo de imagen"), seg(me.modelos, st.modelo, (v) => (st.modelo = v))),
+      h("div", { class: "campo-seg" }, h("span", { class: "etq" }, "Aprobación automática"), seg({ "": "Siempre preguntar", 80: "Desde 80", 85: "Desde 85", 90: "Desde 90" }, String(st.auto_aprobar), (v) => (st.auto_aprobar = v)),
         h("span", { class: "hint" }, "Si la mejor portada de un video llega a esa calificación, se aprueba sola y te avisa.")),
       f("webhook_url", "Avisos (webhook)", { hint: "URL de Slack, Google Chat o Discord para avisar cuando haya portadas por aprobar.", ph: "https://hooks.slack.com/services/…" }),
       cn ? h("div", { class: "row" },
