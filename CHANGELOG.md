@@ -1,5 +1,10 @@
 # Cambios de Gancho
 
+## 0.5.2 — 2026-10-13
+- Versiones (redes y Prisma Plus): si el servidor se reinicia o Nano Banana tarda, la imagen ya pagada se retoma y se recupera (hasta 40 min) en vez de perderse.
+- Textos: "imágenes" con acento, "Pintando… tarda 1 a 3 min", "El gancho de la historia".
+- CSP sin reglas duplicadas.
+
 ## 0.5.1 — 2026-10-13 · Más fácil de usar
 - Ya no aparece "null" en pantallas y ventanas con partes vacías.
 - Administrador: interruptor "Solo lo mío / Todo el equipo" en Inicio, Automático y Prisma Plus.

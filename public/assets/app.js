@@ -543,7 +543,7 @@ function pintarEpisodio(p) {
   }
   if (p.gancho && !pensando) {
     const g = p.gancho;
-    partes.push(h("details", { style: { marginBottom: "20px" } }, h("summary", { class: "eyebrow", style: { cursor: "pointer", marginBottom: "10px" } }, "El gancho que encontró Claude"),
+    partes.push(h("details", { style: { marginBottom: "20px" } }, h("summary", { class: "eyebrow", style: { cursor: "pointer", marginBottom: "10px" } }, "El gancho de la historia"),
       h("div", { class: "gancho" }, [["Transgresión", g.transgresion], ["Testigo / víctima", g.testigo], ["Objeto clave", g.objeto], ["Escenario", g.escenario], ["Final que se oculta", g.final_oculto]]
         .map(([k, v]) => h("div", {}, h("div", { class: "eyebrow" }, k), h("p", {}, v))))));
   }
@@ -747,7 +747,7 @@ function tarjetaFormato(f, recargar) {
   return h("div", { class: "fmt" },
     h("div", { class: `fmt-img${ocupado ? " shimmer" : ""}`, style: { aspectRatio: `${aw} / ${ah}` } },
       f.estado === "lista" ? h("img", { src: mediaFormato(f), alt: f.nombre, loading: "lazy", onclick: () => verGrande(media(f.key)) })
-        : ocupado ? h("div", { class: "estado" }, h("div", { class: "spin" }), "Pintando…", h("small", {}, "1 a 3 min"))
+        : ocupado ? h("div", { class: "estado" }, h("div", { class: "spin" }), "Pintando…", h("small", {}, " tarda 1 a 3 min"))
         : h("div", { class: "estado" }, h("b", { style: { color: "var(--bad)" } }, f.error || "Falló"))),
     h("div", { class: "stack", style: { gap: "4px" } },
       h("b", { style: { fontSize: ".85rem" } }, f.nombre),
@@ -772,7 +772,7 @@ async function vistaFormatos(p, x) {
     clearTimeout(t);
     if (!modal.open) return;
     const lista = await api(`/api/propuestas/${x.id}/formatos`).catch(() => []);
-    galeria.replaceChildren(...(lista.length ? lista.map((f) => tarjetaFormato(f, recargar)) : [h("p", { class: "muted", style: { margin: 0 } }, "Todavía no hay versiones de esta portada.")]));
+    galeria.replaceChildren(...(lista.length ? lista.map((f) => tarjetaFormato(f, recargar)) : [h("p", { class: "muted", style: { margin: 0 } }, "Todavía no hay imágenes de esta portada.")]));
     if (lista.some((f) => ["en_cola", "generando"].includes(f.estado))) t = setTimeout(recargar, 4000);
   };
   const casilla = (tf) => h("label", { class: "fmt-op" },
@@ -782,7 +782,7 @@ async function vistaFormatos(p, x) {
   const crear = h("button", { class: "btn primary", type: "button" });
   const costo = () => {
     crear.disabled = !elegidos.size;
-    crear.textContent = elegidos.size ? `Crear ${elegidos.size} imagen${elegidos.size > 1 ? "es" : ""} · ${elegidos.size * (me.creditosPorImagen || 18)} créditos` : "Elige al menos una";
+    crear.textContent = elegidos.size ? `Crear ${elegidos.size} ${elegidos.size > 1 ? "imágenes" : "imagen"} · ${elegidos.size * (me.creditosPorImagen || 18)} créditos` : "Elige al menos una";
   };
   costo();
   const grupo = (g, titulo, nota) => h("div", { class: "stack", style: { gap: "6px" } }, h("div", { class: "eyebrow" }, titulo),

@@ -55,7 +55,7 @@ export function crearApp() {
   app.use((req, res, next) => {
     res.set({
       "Content-Security-Policy": [
-        "default-src 'self'", "object-src 'none'", "base-uri 'self'", "frame-ancestors 'none'", "img-src 'self' data: blob: https:", "style-src 'self' https://fonts.googleapis.com",
+        "default-src 'self'", "object-src 'none'", "img-src 'self' data: blob: https:", "style-src 'self' https://fonts.googleapis.com",
         "font-src https://fonts.gstatic.com", "script-src 'self'", `connect-src ${CONNECT}`,
         "frame-ancestors 'none'", "base-uri 'none'", "form-action 'self'",
       ].join("; "),

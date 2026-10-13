@@ -295,6 +295,13 @@ async function aRespaldo({ propuestaId, taskId, prioridad, evitar = [] }, motivo
 // ---------- Formatos para redes y Prisma Plus ----------
 // Claude diseña la versión (composición + texto en la imagen), se pinta con las fotos de los actores y se espera aquí mismo.
 async function hFormato({ formatoId, usuario }) {
+  // Si el servidor se reinició mientras se pintaba (la imagen ya se pagó), se retoma la misma tarea en vez de perderla.
+  const previo = await one("SELECT * FROM formatos WHERE id = $1", [formatoId]);
+  if (!previo || ["lista", "error"].includes(previo.estado)) return;
+  if (previo.imagen?.taskId && !previo.imagen?.key) {
+    if (!previo.imagen.taskId.includes("_") || previo.imagen.proveedor === "nanobanana") return terminarFormato(formatoId, previo.episodio_id, { taskId: previo.imagen.taskId }, usuario);
+    throw publico("Se interrumpió. Dale «Otra vez».", { reintentable: false });
+  }
   const f = await one(`UPDATE formatos SET estado = 'generando', error = NULL, actualizado = now() WHERE id = $1 AND estado IN ('en_cola', 'generando') AND NOT (imagen ? 'taskId') RETURNING *`, [formatoId]);
   if (!f) return;
   const spec = FORMATOS[f.tipo];
@@ -311,20 +318,31 @@ async function hFormato({ formatoId, usuario }) {
   try {
     await q("UPDATE formatos SET imagen = imagen || $2::jsonb, textos = $3, prompt = $4, actualizado = now() WHERE id = $1",
       [formatoId, { taskId: r.taskId || `${r.proveedor}_${Date.now()}`, proveedor: r.proveedor }, { principal: diseno.texto_principal, secundario: diseno.texto_secundario }, prompt]);
+  } catch (e) { throw publico(`No se pudo terminar la imagen: ${e.message}`, { reintentable: false }); }
+  return terminarFormato(formatoId, f.episodio_id, r, usuario);
+}
+// Espera la imagen (o usa la que ya llegó), la guarda y marca la versión como lista.
+async function terminarFormato(formatoId, episodioId, r, usuario) {
+  try {
     let buf = r.buffer;
-    const limite = Date.now() + 8 * 60e3; // el trabajo vence a los 20 min: queda margen para Claude y el respaldo
+    const limite = Date.now() + 8 * 60e3; // el trabajo vence a los 25 min: queda margen para Claude y el respaldo
     while (!buf) {
-      if (Date.now() > limite) throw new Error("Nano Banana tardó demasiado.");
+      if (Date.now() > limite) {
+        // Nano Banana va lento: la imagen ya está pagada, así que se sigue esperando en otro turno (hasta 40 min).
+        await q("UPDATE formatos SET actualizado = now() WHERE id = $1", [formatoId]);
+        const inicio = await one("SELECT creado FROM formatos WHERE id = $1", [formatoId]);
+        if (Date.now() - new Date(inicio.creado).getTime() > 40 * 60e3) throw new Error("Nano Banana tardó demasiado.");
+        return enviar("formato", { formatoId, usuario }, { startAfter: 20 });
+      }
       await new Promise((ok) => setTimeout(ok, 5000));
       const t = await nb.consultarTarea(r.taskId).catch((e) => { if (e.reintentable) return { estado: "generando" }; throw e; });
       if (t.estado === "error") throw new Error(t.error || "La imagen no se pudo generar.");
       if (t.estado === "lista") buf = t.buffer || (await descargar(t.url));
     }
     if (!tipoImagen(buf)) throw new Error("El archivo recibido no es una imagen.");
-    const key = await storage.guardar("formatos", buf, tipoImagen(buf));
-    const mini = await storage.guardar("mini", await miniaturaFormato(buf), "jpg");
+    const [key, mini] = await Promise.all([storage.guardar("formatos", buf, tipoImagen(buf)), miniaturaFormato(buf).then((m) => storage.guardar("mini", m, "jpg"))]);
     await q(`UPDATE formatos SET estado = 'lista', imagen = imagen || $2::jsonb, actualizado = now() WHERE id = $1`, [formatoId, { key, mini }]);
-    await repo.tocarEpisodio(f.episodio_id);
+    await repo.tocarEpisodio(episodioId);
   } catch (e) {
     throw publico(e.publico ? e.message : `No se pudo terminar la imagen: ${e.message}`, { reintentable: false });
   }
@@ -677,8 +695,11 @@ async function hVigilante() {
     WHERE estado = 'procesando' AND actualizado < now() - interval '15 minutes' AND NOT ${VIVO("ingesta", "episodioId", "e.id")}`));
   contar("propuestas", await q(`UPDATE episodios e SET estado = 'error', error = 'Se interrumpió. Dale "Intentar de nuevo".', actualizado = now()
     WHERE estado IN ('en_cola','pensando') AND actualizado < now() - interval '10 minutes' AND NOT ${VIVO("propuestas", "episodioId", "e.id")}`));
+  const retomar = await all(`SELECT id, creado_por FROM formatos f WHERE estado = 'generando' AND imagen ? 'taskId' AND NOT (imagen ? 'key')
+    AND actualizado < now() - interval '3 minutes' AND actualizado > now() - interval '40 minutes' AND NOT ${VIVO("formato", "formatoId", "f.id")}`);
+  for (const f of retomar) await enviar("formato", { formatoId: f.id, usuario: f.creado_por });
   contar("formatos", await q(`UPDATE formatos f SET estado = 'error', error = 'Se interrumpió. Dale "Otra vez".', actualizado = now()
-    WHERE estado IN ('en_cola','generando') AND actualizado < now() - interval '20 minutes' AND NOT ${VIVO("formato", "formatoId", "f.id")}`));
+    WHERE estado IN ('en_cola','generando') AND actualizado < now() - interval '40 minutes' AND NOT ${VIVO("formato", "formatoId", "f.id")}`));
   // Las reparaciones de abajo no cambian "actualizado" hasta el final, para no taparse entre ellas.
   const viejo = `(SELECT actualizado FROM episodios WHERE id = p.episodio_id) < now() - interval '10 minutes'`;
   const tocados = new Set();
