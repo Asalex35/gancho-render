@@ -8,7 +8,9 @@ import { als, semaforo } from "../contexto.js";
 // Pocos reintentos aquí: la cola ya reintenta con espera. Tiempo máximo por llamada: 5 min.
 const client = new Anthropic({ apiKey: config.anthropicKey, maxRetries: 1, timeout: 240e3 });
 // Límite real de llamadas simultáneas a Claude en este proceso (todas las colas juntas).
-const turno = semaforo(Number(process.env.CLAUDE_CONCURRENCY || 4));
+// Dos filas: una revisión rápida (Haiku) no espera detrás de propuestas largas (Sonnet).
+const turnoCreativo = semaforo(Number(process.env.CLAUDE_CONCURRENCY || 4));
+const turnoRapido = semaforo(Number(process.env.CLAUDE_CONCURRENCY || 4));
 
 // ---------- Esquemas ----------
 const Calificacion = z.object({
@@ -29,6 +31,12 @@ const Propuesta = z.object({
   calificacion: Calificacion,
   porque_funciona: z.array(z.string()).describe("3 razones, máximo 12 palabras cada una"),
   riesgo: z.string().describe("El punto débil principal, máximo 15 palabras"),
+});
+const DisenoFormato = z.object({
+  personajes_en_portada: z.array(z.string()).describe("Nombres EXACTOS del cast que salen en la imagen"),
+  texto_principal: z.string().describe("Texto que va DENTRO de la imagen (título de serie/película o frase). Cadena vacía si el formato no lleva texto"),
+  texto_secundario: z.string().describe("Tagline corta (máx. 8 palabras) o cadena vacía"),
+  prompt_imagen: z.string().describe("Prompt en inglés para el generador de imágenes, detallado, refiriéndose a los personajes por su nombre"),
 });
 const Gancho = z.object({ transgresion: z.string(), testigo: z.string(), objeto: z.string(), escenario: z.string(), final_oculto: z.string() });
 const RespuestaPropuestas = z.object({ gancho: Gancho, propuestas: z.array(Propuesta) });
@@ -95,7 +103,7 @@ async function llamar({ content, schema, effort = "medium", maxTokens = 16000, c
   const fmt = zodOutputFormat(schema);
   let res;
   try {
-    res = await turno(() => client.beta.messages.create({
+    res = await (creativo ? turnoCreativo : turnoRapido)(() => client.beta.messages.create({
       model: creativo ? config.claudeModelCreativo : config.claudeModel,
       max_tokens: maxTokens,
       betas: ["server-side-fallback-2026-07-01"],
@@ -197,6 +205,33 @@ export function asegurarActores(propuesta, cast) {
   return propuesta;
 }
 
+// Versión de una portada para otra plataforma (TikTok, Instagram, Facebook, Prisma Plus).
+const TEXTOS = {
+  ninguno: "Este formato NO lleva texto: texto_principal y texto_secundario vacíos.",
+  titulo_grande: "texto_principal: título de serie corto y dramático (2 a 5 palabras), estilo apps de series, propio de ESTA historia (inventa uno; no uses frases de ejemplo). texto_secundario: tagline opcional muy corta.",
+  frase_corta: "texto_principal: frase gancho de máximo 6 palabras que provoque (no cuenta el final). texto_secundario vacío.",
+  titulo_pelicula: "texto_principal: título de PELÍCULA evocador (1 a 4 palabras), distinto al título de YouTube, con peso de cine, propio de ESTA historia (inventa uno; no uses frases de ejemplo). texto_secundario: tagline de póster (máx. 8 palabras).",
+};
+export async function disenarFormato({ ep, canal, propuesta, formato }) {
+  const content = `${describirEpisodio(ep, canal)}
+
+PORTADA DE YOUTUBE ELEGIDA (misma historia y mismos actores, pero NO copies su composición):
+Título: "${propuesta.titulo}"
+Concepto: ${propuesta.concepto || ""}
+
+NUEVO FORMATO: ${formato.nombre} · proporción ${formato.aspecto}
+GUÍA VISUAL (en inglés, síguela al pie de la letra): ${formato.guia}
+
+TEXTO EN LA IMAGEN: ${TEXTOS[formato.texto]}
+Todo texto en ${nombreIdioma(canal.idioma)}, con ortografía perfecta y acentos. Nunca reveles el desenlace.
+ACTORES CON FOTO: los personajes marcados "CON FOTO" salen en la imagen (máx. 4) y van en personajes_en_portada con su nombre exacto.
+En prompt_imagen: describe composición vertical u horizontal según la proporción, posición y emoción de cada personaje (por nombre),
+vestuario, luz y color, y si lleva texto escribe literalmente: the title text reads "<texto_principal>" (y la tagline si aplica), indicando tipografía y posición.
+Termina con: "photorealistic, no watermark, no extra text, no logos".`;
+  const r = await llamar({ content, schema: DisenoFormato, effort: "medium", maxTokens: 6000, creativo: true });
+  return asegurarActores(r, ep.cast);
+}
+
 export async function rehacerPropuesta(ep, canal, anterior, { objetivo, razones, comentario }, feedback) {
   const queCambiar = {
     portada: "Rehaz SOLO la portada (concepto y prompt_imagen). Conserva el título exactamente igual.",
@@ -236,7 +271,7 @@ cualquier cosa que viole las reglas de seguridad de marca. "aprobada" = false si
 porque_funciona: 3 razones de máximo 12 palabras. problemas: máximo 2, de máximo 12 palabras cada uno, solo los que más importan (vacía si no hay).`,
     },
   ];
-  return llamar({ content, schema: Evaluacion, effort: "medium", maxTokens: 8000 });
+  return llamar({ content, schema: Evaluacion, effort: "low", maxTokens: 8000 });
 }
 
 export async function generarPaquete(ep, canal, propuesta) {

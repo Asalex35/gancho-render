@@ -11,11 +11,14 @@ export function hashClave(clave) {
   const h = crypto.scryptSync(String(clave), sal, 32);
   return `scrypt$${sal.toString("base64")}$${h.toString("base64")}`;
 }
-function claveOk(clave, guardado) {
+// Asíncrono: no congela el servidor mientras se revisa una contraseña.
+const scrypt = (clave, sal) => new Promise((ok, no) => crypto.scrypt(clave, sal, 32, (e, k) => (e ? no(e) : ok(k))));
+async function claveOk(clave, guardado) {
   const [, sal, h] = String(guardado || "").split("$");
   if (!sal || !h) return false;
-  const real = crypto.scryptSync(String(clave), Buffer.from(sal, "base64"), 32);
-  return crypto.timingSafeEqual(real, Buffer.from(h, "base64"));
+  const real = await scrypt(String(clave), Buffer.from(sal, "base64"));
+  const esperado = Buffer.from(h, "base64");
+  return real.length === esperado.length && crypto.timingSafeEqual(real, esperado);
 }
 const HASH_FALSO = hashClave(crypto.randomBytes(8).toString("hex"));
 
@@ -38,15 +41,17 @@ export async function sembrarUsuarios() {
 
 export async function verificar(usuario, clave) {
   const u = await one("SELECT * FROM usuarios WHERE usuario = $1 AND activo", [normalizarUsuario(usuario)]);
-  const ok = claveOk(clave || "", u?.clave_hash || HASH_FALSO);
+  const ok = await claveOk(clave || "", u?.clave_hash || HASH_FALSO);
   return u && ok ? u : null;
 }
 
+// Cambia si cambia la contraseña (cierra sesiones viejas) sin poner parte del hash en la cookie.
+const huellaClave = (hash) => firmar(`pw|${hash}`).slice(0, 16);
 const firmar = (data) => crypto.createHmac("sha256", config.sessionSecret).update(data).digest("base64url");
 
 export function crearSesion(res, u) {
   // "h" atado al hash de la contraseña: cambiar la contraseña cierra las sesiones viejas.
-  const data = Buffer.from(JSON.stringify({ id: u.id, h: u.clave_hash.slice(-12), exp: Date.now() + DURACION_MS })).toString("base64url");
+  const data = Buffer.from(JSON.stringify({ id: u.id, h: huellaClave(u.clave_hash), exp: Date.now() + DURACION_MS })).toString("base64url");
   res.cookie(COOKIE, `${data}.${firmar(data)}`, { httpOnly: true, secure: config.prod, sameSite: "lax", maxAge: DURACION_MS, path: "/" });
 }
 export const cerrarSesion = (res) => res.clearCookie(COOKIE, { path: "/" });
@@ -75,7 +80,7 @@ export async function usuarioDe(req) {
     const s = JSON.parse(Buffer.from(data, "base64url").toString());
     if (Date.now() > s.exp) return null;
     const u = await usuarioPorId(s.id);
-    if (!u?.activo || u.clave_hash.slice(-12) !== s.h) return null;
+    if (!u?.activo || huellaClave(u.clave_hash) !== s.h) return null;
     return { id: u.id, usuario: u.usuario, rol: u.rol };
   } catch { return null; }
 }

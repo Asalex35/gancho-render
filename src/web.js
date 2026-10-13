@@ -1,6 +1,7 @@
 import express from "express";
 import multer from "multer";
 import rateLimit from "express-rate-limit";
+import compression from "compression";
 import { ZipArchive } from "archiver";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,11 +13,12 @@ import * as storage from "./storage.js";
 import * as nb from "./ai/nanobanana.js";
 import { enviar, PRIORIDAD, estadoCola, avisoNanoBanana } from "./jobs.js";
 import { orden as ordenProveedores, PROVEEDORES } from "./ai/imagen.js";
-import { tipoImagen, normalizarFoto, portadaFinal, portadaPropia, miniatura } from "./imagenes.js";
+import { tipoImagen, normalizarFoto, portadaFinal, portadaPropia, miniatura, formatoFinal } from "./imagenes.js";
 import { interpretar, PLANTILLA, normal } from "./lotes.js";
 import * as ia from "./ai/claude.js";
 import { transcripcionDisponible } from "./transcribir.js";
 import * as biblioteca from "./biblioteca.js";
+import { FORMATOS, TIPOS } from "./formatos.js";
 import { leerLinks, apiDisponible as youtubeApi, buscar as buscarYouTube, tendencias as tendenciasYouTube } from "./competencia.js";
 import fs from "node:fs";
 import os from "node:os";
@@ -42,6 +44,9 @@ function origenesSubida() {
 
 export function crearApp() {
   const app = express();
+  // /api/Episodios/:id no debe saltarse la revisión de dueño (Express ignora mayúsculas por defecto).
+  app.set("case sensitive routing", true);
+  app.use(compression()); // app.js y app.css bajan ~4 veces más ligeros
   const CONNECT = `'self'${origenesSubida()}`;
   app.set("trust proxy", 1);
   app.disable("x-powered-by");
@@ -50,7 +55,7 @@ export function crearApp() {
   app.use((req, res, next) => {
     res.set({
       "Content-Security-Policy": [
-        "default-src 'self'", "img-src 'self' data: blob: https:", "style-src 'self' https://fonts.googleapis.com",
+        "default-src 'self'", "object-src 'none'", "base-uri 'self'", "frame-ancestors 'none'", "img-src 'self' data: blob: https:", "style-src 'self' https://fonts.googleapis.com",
         "font-src https://fonts.gstatic.com", "script-src 'self'", `connect-src ${CONNECT}`,
         "frame-ancestors 'none'", "base-uri 'none'", "form-action 'self'",
       ].join("; "),
@@ -72,7 +77,10 @@ export function crearApp() {
     if (!storage.verificarEnlace(key, req.query.exp, req.query.sig)) return res.sendStatus(404);
     res.set("Cache-Control", "no-store").sendFile(storage.rutaLocal(key), (e) => e && !res.headersSent && res.sendStatus(404));
   });
-  app.post(`/api/nb-callback/${config.callbackSecret}`, (req, res) => {
+  const limiteCallback = rateLimit({ windowMs: 60e3, limit: 120, standardHeaders: true, legacyHeaders: false });
+  app.post("/api/nb-callback/:s", limiteCallback, (req, res) => {
+    const a = Buffer.from(String(req.params.s)), b = Buffer.from(config.callbackSecret);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(404).json({ error: "No encontrado." });
     avisoNanoBanana(req.body?.data?.taskId || req.body?.taskId).catch(() => {});
     res.json({ ok: true });
   });
@@ -80,7 +88,9 @@ export function crearApp() {
   // ---------- Login ----------
   const limiteLogin = rateLimit({ windowMs: 15 * 60e3, limit: 10, standardHeaders: true, legacyHeaders: false, message: { error: "Demasiados intentos. Espera 15 minutos." } });
   app.get("/login", envolver(async (req, res) => ((await usuarioDe(req)) ? res.redirect("/") : res.sendFile(path.join(PUBLIC, "login.html")))));
-  app.post("/api/login", limiteLogin, antiCsrf, envolver(async (req, res) => {
+  const limiteCuenta = rateLimit({ windowMs: 15 * 60e3, limit: 10, skipSuccessfulRequests: true, standardHeaders: true, legacyHeaders: false,
+    keyGenerator: (req) => `u:${String(req.body?.usuario || "").toLowerCase().trim().slice(0, 40)}`, message: { error: "Demasiados intentos con ese usuario. Espera 15 minutos." } });
+  app.post("/api/login", limiteLogin, limiteCuenta, antiCsrf, envolver(async (req, res) => {
     const u = await verificar(req.body?.usuario, req.body?.clave);
     if (!u) return res.status(401).json({ error: "Usuario o contraseña incorrectos." });
     crearSesion(res, u);
@@ -177,9 +187,10 @@ export function crearApp() {
     auto: "SELECT creado_por FROM episodios WHERE id = $1",
     lotes: "SELECT creado_por FROM lotes WHERE id = $1",
     propuestas: "SELECT e.creado_por FROM propuestas p JOIN episodios e ON e.id = p.episodio_id WHERE p.id = $1",
+    formatos: "SELECT creado_por FROM formatos WHERE id = $1",
   };
   app.use("/api/:tipo/:id", (req, res, next) => {
-    const sql = DUENO[req.params.tipo];
+    const sql = DUENO[String(req.params.tipo).toLowerCase()];
     if (!sql || !UUID.test(req.params.id) || req.user?.rol === "admin") return next();
     one(sql, [req.params.id]).then((r) => (r && r.creado_por !== req.usuario ? res.status(404).json({ error: "No encontrado." }) : next()), next);
   });
@@ -226,7 +237,7 @@ export function crearApp() {
     res.json(filas);
   }));
   app.get("/api/episodios/:id", envolver(async (req, res) => {
-    const ep = await repo.episodio(uuid(req.params.id));
+    const ep = await repo.episodio(uuid(req.params.id), { ligero: true });
     if (!ep) throw publico("Ese episodio no existe.", 404);
     res.json(repo.publicarEpisodio(ep));
   }));
@@ -548,15 +559,26 @@ export function crearApp() {
     await hayCupo(req.usuario, 3);
     const key = storage.nuevaKey("videos", ext);
     if (storage.esS3) return res.json({ key, url: await storage.urlDeSubida(key), tipo: storage.mimeDe(key) });
-    res.json({ key, local: true });
+    // Sin S3: el paso 1b solo acepta la llave que se emitió aquí, para este usuario.
+    res.json({ key, local: true, firma: firmaSubida(key, req.usuario) });
   }));
   // 1b) Sin R2/S3: el video llega al servidor como flujo y se guarda en disco.
   app.put("/api/auto/subida/:carpeta/:archivo", envolver(async (req, res) => {
     const key = `${req.params.carpeta}/${req.params.archivo}`;
-    if (storage.esS3 || req.params.carpeta !== "videos" || !storage.keyValida(key)) throw publico("Subida no válida.");
-    if (Number(req.get("content-length") || 0) > LIMITE_VIDEO) throw publico("El video pesa más de 5 GB.", 413);
+    const ext = req.params.archivo.split(".").pop();
+    if (storage.esS3 || req.params.carpeta !== "videos" || !storage.keyValida(key) || !storage.EXT_VIDEO.includes(ext)) throw publico("Subida no válida.");
+    const firma = Buffer.from(String(req.get("x-firma") || "")), esperada = Buffer.from(firmaSubida(key, req.usuario));
+    if (firma.length !== esperada.length || !crypto.timingSafeEqual(firma, esperada)) throw publico("Subida no válida.", 403);
+    const tamano = Number(req.get("content-length") || 0);
+    if (tamano > LIMITE_VIDEO) throw publico("El video pesa más de 5 GB.", 413);
+    if (subiendoVideo.has(req.usuario)) throw publico("Ya estás subiendo un video; espera a que termine.", 409);
+    const disco = await fs.promises.statfs(config.storage.localDir).catch(() => null);
+    if (disco && disco.bavail * disco.bsize < tamano + 2e9) throw publico("El servidor no tiene espacio para ese video. Avisa al administrador.", 507);
     if (await storage.existe(key)) throw publico("Ese archivo ya existe.", 409);
-    const tmp = `${os.tmpdir()}/gancho-subida-${crypto.randomBytes(8).toString("hex")}`;
+    subiendoVideo.add(req.usuario);
+    res.on("close", () => subiendoVideo.delete(req.usuario));
+    // Temporal en el mismo disco que el destino: el cambio de nombre es instantáneo (sin copiar 5 GB).
+    const tmp = path.join(config.storage.localDir, "videos", `.subida-${crypto.randomBytes(8).toString("hex")}`);
     let bytes = 0;
     req.on("data", (d) => { bytes += d.length; if (bytes > LIMITE_VIDEO) req.destroy(new Error("demasiado grande")); });
     try {
@@ -600,6 +622,48 @@ export function crearApp() {
   }));
 
   // ---------- Administración ----------
+  // ---------- Formatos: TikTok, Instagram, Facebook y Prisma Plus ----------
+  const verFormato = (f) => ({ id: f.id, tipo: f.tipo, nombre: FORMATOS[f.tipo]?.nombre || f.tipo, grupo: FORMATOS[f.tipo]?.grupo, aspecto: FORMATOS[f.tipo]?.aspecto,
+    estado: f.estado, error: f.error, key: f.imagen?.key || null, mini: f.imagen?.mini || null, textos: f.textos, creado: f.creado,
+    titulo: f.titulo, episodio_id: f.episodio_id, propuesta_id: f.propuesta_id });
+  app.get("/api/formatos/tipos", (req, res) => res.json(Object.entries(FORMATOS).map(([tipo, f]) => ({ tipo, nombre: f.nombre, grupo: f.grupo, aspecto: f.aspecto, ancho: f.ancho, alto: f.alto }))));
+  app.get("/api/propuestas/:id/formatos", envolver(async (req, res) => {
+    res.json((await all("SELECT * FROM formatos WHERE propuesta_id = $1 ORDER BY creado DESC LIMIT 40", [uuid(req.params.id)])).map(verFormato));
+  }));
+  app.post("/api/propuestas/:id/formatos", envolver(async (req, res) => {
+    const p = await propuestaConEpisodio(req.params.id);
+    if (p.imagen?.estado !== "lista") throw publico("Primero tiene que estar lista la portada de YouTube.");
+    const tipos = [...new Set((Array.isArray(req.body?.tipos) ? req.body.tipos : []).filter((t) => TIPOS.includes(t)))];
+    if (!tipos.length) throw publico("Elige al menos un formato.");
+    const enCurso = await one("SELECT count(*)::int AS n FROM formatos WHERE propuesta_id = $1 AND estado IN ('en_cola','generando')", [p.id]);
+    if (enCurso.n + tipos.length > 10) throw publico("Espera a que terminen las versiones que se están haciendo.", 409);
+    await reservarCupo(req.usuario, tipos.length);
+    for (const tipo of tipos) {
+      const f = await one("INSERT INTO formatos (propuesta_id, episodio_id, tipo, creado_por) VALUES ($1,$2,$3,$4) RETURNING id", [p.id, p.episodio_id, tipo, req.usuario]);
+      await enviar("formato", { formatoId: f.id, usuario: req.usuario }, { prioridad: PRIORIDAD.interactiva });
+    }
+    res.status(202).json({ ok: true });
+  }));
+  app.get("/api/formatos/:id/descargar", envolver(async (req, res) => {
+    const f = await one(`SELECT f.*, e.titulo FROM formatos f JOIN episodios e ON e.id = f.episodio_id WHERE f.id = $1`, [uuid(req.params.id)]);
+    const spec = f && FORMATOS[f.tipo];
+    if (!spec || f.estado !== "lista" || !f.imagen?.key) throw publico("Esa versión no está lista.", 404);
+    const buf = await formatoFinal(f.imagen.key, spec.ancho, spec.alto);
+    res.set({ "Content-Type": "image/jpeg", "Content-Disposition": adjunto(`${f.titulo} - ${spec.nombre}`, "jpg") }).send(buf);
+  }));
+  app.delete("/api/formatos/:id", envolver(async (req, res) => {
+    const f = await one("DELETE FROM formatos WHERE id = $1 AND estado IN ('lista','error') RETURNING imagen", [uuid(req.params.id)]);
+    if (!f) throw publico("No se puede borrar mientras se está haciendo.", 409);
+    await storage.borrar(f.imagen?.key); await storage.borrar(f.imagen?.mini);
+    res.json({ ok: true });
+  }));
+  // Prisma Plus: todos los pósters y banners de cine de este usuario.
+  app.get("/api/prisma", envolver(async (req, res) => {
+    const filas = await all(`SELECT f.*, e.titulo FROM formatos f JOIN episodios e ON e.id = f.episodio_id
+      WHERE f.creado_por = $1 AND f.tipo LIKE 'prisma_%' ORDER BY f.creado DESC LIMIT 120`, [req.usuario]);
+    res.json(filas.map(verFormato));
+  }));
+
   // ---------- Competencia (vista previa "Así se ve en YouTube") ----------
   app.get("/api/competencia", envolver(async (req, res) => {
     const videos = await all("SELECT id, video_id, titulo, autor, vistas, publicado, duracion FROM competencia ORDER BY coalesce(publicado, creado) DESC LIMIT 80");
@@ -756,6 +820,11 @@ const celda = (c) => { const t = String(c ?? ""); return `"${(/^[=+\-@\t\r]/.tes
 function archivoSeguro(s) { return String(s || "portada").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N} _-]/gu, "").trim().slice(0, 60) || "portada"; }
 
 // Reserva atómica del cupo diario: dos lotes simultáneos no pueden pasarse del límite.
+const subiendoVideo = new Set();
+function firmaSubida(key, usuario) {
+  return crypto.createHmac("sha256", config.sessionSecret).update(`subida|${key}|${usuario}`).digest("base64url");
+}
+
 async function reservarCupo(usuario, n) {
   if (config.mockImages || n <= 0) return;
   const L = config.limits;
@@ -787,6 +856,8 @@ async function borrarEpisodios(where, params) {
       UNION ALL SELECT p.imagen->>'mini' FROM propuestas p JOIN episodios e ON e.id = p.episodio_id WHERE ${where}
       UNION ALL SELECT v.imagen->>'key' FROM versiones v JOIN propuestas p ON p.id = v.propuesta_id JOIN episodios e ON e.id = p.episodio_id WHERE ${where}
       UNION ALL SELECT v.imagen->>'mini' FROM versiones v JOIN propuestas p ON p.id = v.propuesta_id JOIN episodios e ON e.id = p.episodio_id WHERE ${where}
+      UNION ALL SELECT f.imagen->>'key' FROM formatos f JOIN episodios e ON e.id = f.episodio_id WHERE ${where}
+      UNION ALL SELECT f.imagen->>'mini' FROM formatos f JOIN episodios e ON e.id = f.episodio_id WHERE ${where}
       UNION ALL SELECT e.video->>'key' FROM episodios e WHERE ${where}
       UNION ALL SELECT jsonb_array_elements_text(coalesce(e.video->'cuadros', '[]'::jsonb)) FROM episodios e WHERE ${where}
     ) x WHERE k IS NOT NULL`, params);

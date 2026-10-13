@@ -27,7 +27,7 @@ if (config.role === "all" || config.role === "web") {
   });
 }
 // Subidas de video largas: sin tope total por petición (Render corta conexiones inactivas por su cuenta).
-if (server) { server.requestTimeout = 0; server.headersTimeout = 65000; server.keepAliveTimeout = 61000; }
+if (server) { server.requestTimeout = 6 * 3600e3; server.headersTimeout = 65000; server.keepAliveTimeout = 61000; }
 if (config.role === "all" || config.role === "worker") await iniciarWorkers();
 
 async function apagar() {

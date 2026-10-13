@@ -25,8 +25,12 @@ export async function miniatura(buf) {
 }
 
 // Para mandarle a Claude: máx. 1568 px (lo que Claude aprovecha) y menos de 5 MB.
-export async function paraClaude(buf) {
-  return sharp(buf, LIM).resize(1568, 1568, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
+export async function paraClaude(buf, max = 1568) {
+  return sharp(buf, LIM).resize(max, max, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
+}
+// Portada recién generada: máx. 1920 px de ancho (YouTube usa 1280×720). Archivos más ligeros = pantalla y revisión más rápidas.
+export async function reducirPortada(buf) {
+  return sharp(buf, LIM).resize(1920, 1080, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 88, mozjpeg: true }).toBuffer();
 }
 
 // Portada final para YouTube: 1280x720, JPG < 2 MB, con el logo del canal abajo a la izquierda.
@@ -62,4 +66,12 @@ export async function aclarar(buf, objetivo = 120) {
   for (let i = 0; i < data.length; i++) data[i] = curva[data[i]];
   const out = await sharp(data, { raw: info }).modulate({ saturation: 1.1 }).jpeg({ quality: 92, mozjpeg: true }).toBuffer();
   return { buf: out, antes: Math.round(antes), despues: Math.round(await luz(out)), cambio: true };
+}
+
+// Formatos para redes y Prisma Plus: medida exacta de cada plataforma, JPG de alta calidad.
+export async function formatoFinal(key, ancho, alto) {
+  return sharp(await storage.leer(key), LIM).resize(ancho, alto, { fit: "cover", position: "attention" }).jpeg({ quality: 90, mozjpeg: true }).toBuffer();
+}
+export async function miniaturaFormato(buf) {
+  return sharp(buf, LIM).resize(420, 420, { fit: "inside" }).jpeg({ quality: 80 }).toBuffer();
 }

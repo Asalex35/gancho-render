@@ -113,6 +113,7 @@ async function ruta() {
     if (a === "auto") return await vistaAuto();
     if (a === "canales") return await vistaCanales();
     if (a === "admin") return await vistaAdmin();
+    if (a === "prisma") return await vistaPrisma();
     return await vistaInicio();
   } catch (e) {
     $app.replaceChildren(h("div", { class: "vacio" }, h("h2", {}, "No se pudo cargar"), h("p", { class: "muted" }, e.message), h("a", { class: "btn", href: "#/" }, "Volver")));
@@ -444,7 +445,7 @@ async function vistaEpisodio(id, t = navId) {
   const json = JSON.stringify(p);
   if (json !== ultimoJSON && !editando) { ultimoJSON = json; pintarEpisodio(p); }
   const ocupado = ["en_cola", "pensando", "procesando"].includes(p.estado) || p.eligiendo || p.propuestas.some(OCUPADA);
-  if (ocupado) poll = setTimeout(() => vistaEpisodio(id, t).catch(() => { if (vigente(t)) poll = setTimeout(() => vistaEpisodio(id, t).catch(() => {}), 15000); }), 3000);
+  if (ocupado) poll = setTimeout(() => vistaEpisodio(id, t).catch(() => { if (vigente(t)) poll = setTimeout(() => vistaEpisodio(id, t).catch(() => {}), 15000); }), document.hidden ? 15000 : 3000);
   else cargarMe().catch(() => {});
 }
 
@@ -566,6 +567,7 @@ function tarjeta(p, x, i, recargar) {
   // Parecido medido con el comparador de rostros contra el actor real.
   const nivel = (sim) => (sim >= 0.55 ? ["Alto", "ok"] : sim >= 0.4 ? ["Medio", "warn"] : ["Bajo", "bad"]);
   const parecido = (ev?.parecido || []).map((x) => { const [t, c] = nivel(x.sim); return h("span", { class: `tag ${c}`, title: `Similitud ${x.sim}` }, `${x.personaje}: parecido ${t}`); });
+  if (ev?.sinMedicion) parecido.push(h("span", { class: "tag warn", title: "No se detectaron caras claras en la portada" }, "Parecido sin medir"));
   const razones = ev?.porque_funciona?.length ? ev.porque_funciona : x.porque_funciona;
   const movil = h("div", { class: "movil", "aria-label": "Así se ve en el celular" },
     h("div", { class: "mini" }, img.estado === "lista" ? h("img", { src: media(img.mini || img.key), alt: "" }) : null),
@@ -595,6 +597,7 @@ function tarjeta(p, x, i, recargar) {
       img.estado === "lista" ? h("div", { class: "row", style: { gap: "8px" } },
         h("button", { class: "btn ghost", type: "button", style: { flex: 1 }, onclick: () => vistaYouTube(p, x).catch((e) => toast(e.message, true)) }, "▶ Ver en YouTube"),
         h("button", { class: "btn ghost", type: "button", style: { flex: 1 }, title: "JPG 1280×720 listo para subir a YouTube", onclick: () => descargar(`/api/episodios/${p.id}/portada.jpg?propuesta=${x.id}`) }, "⬇ Descargar")) : null,
+      img.estado === "lista" ? h("button", { class: "btn ghost full", type: "button", onclick: () => vistaFormatos(p, x).catch((e) => toast(e.message, true)) }, "✦ Redes y Prisma Plus") : null,
       h("div", { class: "acciones" },
         h("button", { class: `btn ${elegida ? "" : "primary"} full`, type: "button", disabled: img.estado !== "lista" || OCUPADA(x) || p.eligiendo,
           onclick: async (e) => { const b = e.currentTarget; b.disabled = true; try { await api(`/api/propuestas/${x.id}/elegir`, { method: "POST" }); recargar(); } catch (er) { toast(er.message, true); b.disabled = false; } } },
@@ -702,6 +705,85 @@ async function vistaYouTube(p, x) {
   abrirModal(h("h2", {}, "Así se ve en YouTube"), controles, fuentes, escenario, problemas,
     h("div", { class: "foot" }, h("button", { class: "btn", type: "button", onclick: cerrarModal }, "Cerrar")));
   modal.classList.add("yt-ancho");
+}
+
+// ================= Formatos: redes sociales y Prisma Plus =================
+let tiposFormato = null;
+const mediaFormato = (f) => (f.mini || f.key ? media(f.mini || f.key) : null);
+function tarjetaFormato(f, recargar) {
+  const [aw, ah] = String(f.aspecto || "1:1").split(":").map(Number);
+  const ocupado = ["en_cola", "generando"].includes(f.estado);
+  return h("div", { class: "fmt" },
+    h("div", { class: `fmt-img${ocupado ? " shimmer" : ""}`, style: { aspectRatio: `${aw} / ${ah}` } },
+      f.estado === "lista" ? h("img", { src: mediaFormato(f), alt: f.nombre, loading: "lazy", onclick: () => verGrande(media(f.key)) })
+        : ocupado ? h("div", { class: "estado" }, h("div", { class: "spin" }), "Pintando…")
+        : h("div", { class: "estado" }, h("b", { style: { color: "var(--bad)" } }, f.error || "Falló"))),
+    h("div", { class: "stack", style: { gap: "4px" } },
+      h("b", { style: { fontSize: ".85rem" } }, f.nombre),
+      f.textos?.principal ? h("span", { class: "muted", style: { fontSize: ".8rem" } }, `“${f.textos.principal}”`) : null,
+      f.titulo ? h("a", { href: `#/ep/${f.episodio_id}`, class: "muted", style: { fontSize: ".75rem" } }, f.titulo) : null),
+    h("div", { class: "row", style: { gap: "6px" } },
+      f.estado === "lista" ? h("button", { class: "btn small", type: "button", onclick: () => descargar(`/api/formatos/${f.id}/descargar`) }, "⬇ Descargar") : null,
+      !ocupado ? h("button", { class: "btn small ghost danger", type: "button", onclick: async () => {
+        try { await api(`/api/formatos/${f.id}`, { method: "DELETE" }); recargar(); } catch (e) { toast(e.message, true); }
+      } }, "Borrar") : null));
+}
+
+async function vistaFormatos(p, x) {
+  tiposFormato ||= await api("/api/formatos/tipos");
+  const elegidos = new Set(local.get("fmt-elegidos") || ["tiktok"]);
+  const galeria = h("div", { class: "fmt-grid" });
+  let t;
+  const recargar = async () => {
+    clearTimeout(t);
+    if (!modal.open) return;
+    const lista = await api(`/api/propuestas/${x.id}/formatos`).catch(() => []);
+    galeria.replaceChildren(...(lista.length ? lista.map((f) => tarjetaFormato(f, recargar)) : [h("p", { class: "muted", style: { margin: 0 } }, "Todavía no hay versiones de esta portada.")]));
+    if (lista.some((f) => ["en_cola", "generando"].includes(f.estado))) t = setTimeout(recargar, 4000);
+  };
+  const casilla = (tf) => h("label", { class: "fmt-op" },
+    h("input", { type: "checkbox", checked: elegidos.has(tf.tipo), onchange: (e) => { e.target.checked ? elegidos.add(tf.tipo) : elegidos.delete(tf.tipo); local.set("fmt-elegidos", [...elegidos]); costo(); } }),
+    h("span", {}, h("b", {}, tf.nombre), h("small", { class: "muted" }, ` ${tf.ancho}×${tf.alto}`)));
+  const costoEl = h("span", { class: "muted", style: { fontSize: ".85rem" } });
+  const costo = () => { costoEl.textContent = elegidos.size ? `${elegidos.size} imagen${elegidos.size > 1 ? "es" : ""} · ${elegidos.size * (me.creditosPorImagen || 18)} créditos` : ""; };
+  costo();
+  const grupo = (g, titulo, nota) => h("div", { class: "stack", style: { gap: "6px" } }, h("div", { class: "eyebrow" }, titulo),
+    nota ? h("span", { class: "muted", style: { fontSize: ".8rem" } }, nota) : null, tiposFormato.filter((tf) => tf.grupo === g).map(casilla));
+  abrirModal(h("h2", {}, "Versiones para redes y Prisma Plus"),
+    h("p", { class: "muted", style: { margin: 0 } }, `Misma historia y mismos actores que “${x.titulo}”, rediseñada para cada plataforma.`),
+    h("div", { class: "grid2" },
+      grupo("redes", "Redes", "TikTok con título grande al estilo de las apps de series."),
+      grupo("prisma", "Prisma Plus", "Póster de cine y banner para la app: fotorrealista, nivel película.")),
+    h("div", { class: "row", style: { justifyContent: "space-between" } }, costoEl,
+      h("button", { class: "btn primary", type: "button", onclick: async (e) => {
+        const b = e.currentTarget; b.disabled = true;
+        try { await api(`/api/propuestas/${x.id}/formatos`, { method: "POST", body: { tipos: [...elegidos] } }); toast("Pintando versiones…"); await recargar(); }
+        catch (er) { toast(er.message, true); }
+        b.disabled = false;
+      } }, "Crear versiones")),
+    h("div", { class: "eyebrow" }, "Versiones de esta portada"), galeria,
+    h("div", { class: "foot" }, h("button", { class: "btn", type: "button", onclick: cerrarModal }, "Cerrar")));
+  modal.classList.add("yt-ancho");
+  await recargar();
+}
+
+// ================= PRISMA PLUS =================
+async function vistaPrisma() {
+  const t = navId;
+  const caja = h("div", { class: "fmt-grid grande" }, h("div", { class: "vacio" }, h("div", { class: "spin" })));
+  const recargar = async () => {
+    if (!vigente(t)) return;
+    const lista = await api("/api/prisma");
+    if (!vigente(t)) return;
+    caja.replaceChildren(...(lista.length ? lista.map((f) => tarjetaFormato(f, recargar))
+      : [h("div", { class: "vacio" }, h("h2", {}, "Todavía no hay pósters"), h("p", { class: "muted", style: { margin: 0 } },
+          "Abre un episodio, en la portada elige “✦ Redes y Prisma Plus” y marca Póster o Banner."))]));
+    if (lista.some((f) => ["en_cola", "generando"].includes(f.estado))) poll = setTimeout(recargar, 5000);
+  };
+  $app.replaceChildren(
+    h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Prisma Plus"), h("h1", {}, "Pósters y banners de cine para la app"))),
+    caja);
+  await recargar();
 }
 
 function rehacer(x, recargar) {
@@ -939,7 +1021,7 @@ async function vistaAuto() {
         await new Promise((resolver, rechazar) => {
           const x = new XMLHttpRequest();
           if (r.url) { x.open("PUT", r.url); x.setRequestHeader("Content-Type", r.tipo); }
-          else { x.open("PUT", `/api/auto/subida/${r.key}`); x.setRequestHeader("X-Gancho", "1"); }
+          else { x.open("PUT", `/api/auto/subida/${r.key}`); x.setRequestHeader("X-Gancho", "1"); x.setRequestHeader("X-Firma", r.firma); }
           x.upload.onprogress = (e) => { if (e.lengthComputable) barraEl.style.width = `${(e.loaded / e.total) * 100}%`; };
           x.onload = () => (x.status < 300 ? resolver() : rechazar(new Error(r.url ? "El almacenamiento rechazó el video. Revisa el CORS del bucket." : "No se pudo subir el video.")));
           x.onerror = () => rechazar(new Error("Se cortó la subida. Revisa tu conexión."));

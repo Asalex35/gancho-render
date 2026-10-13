@@ -15,7 +15,8 @@ import * as storage from "./storage.js";
 import * as nb from "./ai/nanobanana.js";
 import * as ia from "./ai/claude.js";
 import * as imagen from "./ai/imagen.js";
-import { tipoImagen, miniatura, paraClaude, aclarar } from "./imagenes.js";
+import { tipoImagen, miniatura, paraClaude, aclarar, miniaturaFormato, reducirPortada } from "./imagenes.js";
+import { FORMATOS } from "./formatos.js";
 import * as video from "./video.js";
 import { transcribir, transcripcionDisponible, guionConHablantes } from "./transcribir.js";
 import * as caras from "./caras.js";
@@ -39,10 +40,11 @@ const COLAS = {
   ingesta: { retryLimit: 2, retryDelay: 60, retryBackoff: true, expireInSeconds: 5400 },
   propuestas: { retryLimit: 3, retryDelay: 30, retryBackoff: true, expireInSeconds: 2400 },
   imagen: { retryLimit: 3, retryDelay: 30, retryBackoff: true, expireInSeconds: 900 },
-  revisar: { retryLimit: 5, retryDelay: 15, retryBackoff: true, expireInSeconds: 300 },
+  revisar: { retryLimit: 5, retryDelay: 15, retryBackoff: true, expireInSeconds: 300, deleteAfterSeconds: 3600 },
   evaluar: { retryLimit: 3, retryDelay: 30, retryBackoff: true, expireInSeconds: 1500 },
   rehacer: { retryLimit: 3, retryDelay: 30, retryBackoff: true, expireInSeconds: 2400 },
   paquete: { retryLimit: 3, retryDelay: 30, retryBackoff: true, expireInSeconds: 1500 },
+  formato: { retryLimit: 2, retryDelay: 30, retryBackoff: true, expireInSeconds: 1500 },
 };
 
 export async function iniciarCola() {
@@ -57,8 +59,8 @@ export async function iniciarCola() {
 // Aviso de Nano Banana: la imagen ya está → se revisa de inmediato en vez de esperar el siguiente turno.
 export async function avisoNanoBanana(taskId) {
   if (typeof taskId !== "string" || !taskId || taskId.length > 100) return;
-  const p = await one(`SELECT id FROM propuestas WHERE imagen->>'taskId' = $1 AND imagen->>'estado' = 'generando' AND NOT archivada`, [taskId]);
-  if (p) await enviar("revisar", { propuestaId: p.id, taskId, prioridad: PRIORIDAD.interactiva }, { prioridad: PRIORIDAD.interactiva });
+  const p = await one(`SELECT id, imagen FROM propuestas WHERE imagen->>'taskId' = $1 AND imagen->>'estado' = 'generando' AND NOT archivada`, [taskId]);
+  if (p) await enviar("revisar", { propuestaId: p.id, taskId, prioridad: PRIORIDAD.interactiva, callback: true, evitar: p.imagen?.evitar || [] }, { prioridad: PRIORIDAD.interactiva });
 }
 
 export function enviar(nombre, data, { prioridad = PRIORIDAD.interactiva, startAfter } = {}) {
@@ -72,7 +74,8 @@ const normal = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").t
 // Envoltura: decide si un error se reintenta o se marca como fallido de una vez.
 // La señal del trabajo viaja en el contexto: si pg-boss lo da por vencido, se cancelan sus llamadas.
 function trabajo(nombre, fn, alFallar, concurrencia) {
-  return boss.work(nombre, { localConcurrency: concurrencia, includeMetadata: true, pollingIntervalSeconds: 2 }, async ([job]) => {
+  const rapida = ["imagen", "revisar", "evaluar", "formato"].includes(nombre);
+  return boss.work(nombre, { localConcurrency: concurrencia, includeMetadata: true, pollingIntervalSeconds: rapida ? 0.5 : 2 }, async ([job]) => {
     try {
       await als.run({ signal: job.signal }, () => fn(job.data, job));
     } catch (e) {
@@ -173,7 +176,7 @@ function unaCara(refs, personajes) {
     " Background extras must also look clearly different from the reference actors.";
 }
 
-function promptConReferencias(prompt, refs, extra, personajes = []) {
+function promptConReferencias(prompt, refs, extra, personajes = [], { luz: conLuz = true } = {}) {
   let n = 0;
   const mapa = refs.map((r) => {
     const idx = r.fotos.map(() => ++n);
@@ -190,7 +193,7 @@ Use the references ONLY for identity and wardrobe; build a new, more dramatic co
 ${unaCara(refs, personajes)}\n\n` : "";
   // Las portadas de la competencia son claras y saturadas: una portada oscura se pierde en la página de inicio.
   const luz = "LIGHTING: bright, high-key commercial lighting with vivid saturated colors; faces brightly and evenly lit. Even night or hospital scenes must read clearly at thumbnail size: no dark, gloomy or low-key images.";
-  return `${cabeza}${prompt}\n\n${luz}${extra ? `\n\nFIX THESE PROBLEMS FROM THE PREVIOUS ATTEMPT: ${extra}` : ""}`;
+  return `${cabeza}${prompt}${conLuz ? `\n\n${luz}` : ""}${extra ? `\n\nFIX THESE PROBLEMS FROM THE PREVIOUS ATTEMPT: ${extra}` : ""}`;
 }
 
 // Prepara cada referencia como URL pública (Nano Banana) y como base64 (Google / Seedream).
@@ -289,12 +292,55 @@ async function aRespaldo({ propuestaId, taskId, prioridad, evitar = [] }, motivo
   await enviar("imagen", { propuestaId, usuario: p.imagen.usuario, prioridad, evitar: [...evitar, "nanobanana"], cobrar: true }, { prioridad });
 }
 
+// ---------- Formatos para redes y Prisma Plus ----------
+// Claude diseña la versión (composición + texto en la imagen), se pinta con las fotos de los actores y se espera aquí mismo.
+async function hFormato({ formatoId, usuario }) {
+  const f = await one(`UPDATE formatos SET estado = 'generando', error = NULL, actualizado = now() WHERE id = $1 AND estado IN ('en_cola', 'generando') AND NOT (imagen ? 'taskId') RETURNING *`, [formatoId]);
+  if (!f) return;
+  const spec = FORMATOS[f.tipo];
+  const p = await repo.propuesta(f.propuesta_id);
+  const ep = p && (await repo.episodio(f.episodio_id));
+  if (!spec || !ep) throw publico("La portada original ya no existe.");
+  const canal = await repo.canal(ep.canal);
+  const diseno = await ia.disenarFormato({ ep, canal, propuesta: p.data, formato: spec });
+  await repo.sumarUso(usuario, "textos");
+  const refs = await referencias({ ...ep, modelo: "pro" }, { personajes_en_portada: diseno.personajes_en_portada }, { conEscena: false });
+  const prompt = promptConReferencias(diseno.prompt_imagen, refs, null, diseno.personajes_en_portada, { luz: spec.grupo !== "prisma" });
+  const r = await imagen.generar({ prompt, refs: await prepararRefs(refs), modelo: "pro", aspecto: spec.aspecto, resolucion: spec.resolucion });
+  // Ya se pagó: desde aquí ningún error debe volver a pedir la imagen.
+  try {
+    await q("UPDATE formatos SET imagen = imagen || $2::jsonb, textos = $3, prompt = $4, actualizado = now() WHERE id = $1",
+      [formatoId, { taskId: r.taskId || `${r.proveedor}_${Date.now()}`, proveedor: r.proveedor }, { principal: diseno.texto_principal, secundario: diseno.texto_secundario }, prompt]);
+    let buf = r.buffer;
+    const limite = Date.now() + 8 * 60e3; // el trabajo vence a los 20 min: queda margen para Claude y el respaldo
+    while (!buf) {
+      if (Date.now() > limite) throw new Error("Nano Banana tardó demasiado.");
+      await new Promise((ok) => setTimeout(ok, 5000));
+      const t = await nb.consultarTarea(r.taskId).catch((e) => { if (e.reintentable) return { estado: "generando" }; throw e; });
+      if (t.estado === "error") throw new Error(t.error || "La imagen no se pudo generar.");
+      if (t.estado === "lista") buf = t.buffer || (await descargar(t.url));
+    }
+    if (!tipoImagen(buf)) throw new Error("El archivo recibido no es una imagen.");
+    const key = await storage.guardar("formatos", buf, tipoImagen(buf));
+    const mini = await storage.guardar("mini", await miniaturaFormato(buf), "jpg");
+    await q(`UPDATE formatos SET estado = 'lista', imagen = imagen || $2::jsonb, actualizado = now() WHERE id = $1`, [formatoId, { key, mini }]);
+    await repo.tocarEpisodio(f.episodio_id);
+  } catch (e) {
+    throw publico(e.publico ? e.message : `No se pudo terminar la imagen: ${e.message}`, { reintentable: false });
+  }
+}
+async function fallaFormato({ formatoId, usuario }, e) {
+  const f = await one(`UPDATE formatos SET estado = 'error', error = $2, actualizado = now() WHERE id = $1 RETURNING imagen`, [formatoId, msg(e, "No se pudo crear esta versión.")]);
+  if (f && !f.imagen?.taskId) await repo.devolverCupo(usuario, 1); // nunca se pidió la imagen
+}
+
 // ---------- 3. Revisar si la imagen de Nano Banana ya está ----------
 async function descargar(url) {
   const u = new URL(url);
   if (u.protocol !== "https:") throw new Error("URL de imagen no segura");
-  const res = await fetch(u, { signal: senal(60000) });
+  const res = await fetch(u, { signal: senal(60000), redirect: "error" });
   if (!res.ok) throw new Error(`Descarga falló: ${res.status}`);
+  if (Number(res.headers.get("content-length")) > 25 * 1024 * 1024) throw new Error("Imagen demasiado grande");
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length > 25 * 1024 * 1024) throw new Error("Imagen demasiado grande");
   return buf;
@@ -304,10 +350,10 @@ async function guardarResultado(propuestaId, taskId, buf, prioridad) {
   let ext = tipoImagen(buf);
   if (!ext) throw new Error("El archivo recibido no es una imagen");
   // Si salió oscura, se aclara para que no se pierda junto a las portadas de otros canales.
+  buf = await reducirPortada(buf); ext = "jpg";
   const luz = await aclarar(buf).catch(() => null);
-  if (luz?.cambio) { buf = luz.buf; ext = "jpg"; }
-  const key = await storage.guardar("portadas", buf, ext);
-  const mini = await storage.guardar("mini", await miniatura(buf), "jpg");
+  if (luz?.cambio) buf = luz.buf;
+  const [key, mini] = await Promise.all([storage.guardar("portadas", buf, ext), miniatura(buf).then((m) => storage.guardar("mini", m, "jpg"))]);
   const { rowCount } = await q(`UPDATE propuestas SET imagen = imagen || $3::jsonb WHERE id = $1 AND imagen->>'taskId' = $2 AND imagen->>'estado' = 'generando' AND NOT archivada`,
     [propuestaId, taskId, { estado: "lista", key, mini, error: null, luz: luz ? { antes: luz.antes, despues: luz.despues } : null }]);
   if (!rowCount) { await storage.borrar(key); await storage.borrar(mini); return; }
@@ -332,8 +378,9 @@ async function hRevisar(data) {
     throw e;
   }
   if (r.estado === "generando") {
+    if (data.callback) return; // la cadena normal de revisión sigue viva
     if (vencido) return aRespaldo(data, "Nano Banana tardó demasiado.");
-    return enviar("revisar", data, { prioridad, startAfter: 5 });
+    return enviar("revisar", data, { prioridad, startAfter: 3 });
   }
   if (r.estado === "error") return aRespaldo(data, r.error);
   const buf = r.buffer || (await descargar(r.url));
@@ -350,9 +397,15 @@ async function hEvaluar({ propuestaId, key, prioridad, sinReintento }) {
     const p = await repo.propuesta(propuestaId);
     if (!p) return;
     const ep = await repo.episodio(p.episodio_id);
-    const b64 = async (k) => ({ base64: (await paraClaude(await storage.leer(k))).toString("base64"), mime: "image/jpeg" });
+    const b64 = async (k, buf) => ({ base64: (await paraClaude(buf || (await storage.leer(k)), 1024)).toString("base64"), mime: "image/jpeg" });
+    const portada = await storage.leer(key);
     const refs = await Promise.all((await referencias(ep, p.data, { conEscena: false })).map(async (r) => ({ personaje: r.personaje, ...(await b64(r.fotos[0])) })));
-    ev = await ia.evaluarPortada({ imagen: await b64(key), propuesta: p.data, referencias: refs });
+    // Claude revisa la imagen mientras el detector local busca las caras (en paralelo).
+    let enPortada = null;
+    [ev] = await Promise.all([
+      ia.evaluarPortada({ imagen: await b64(key, portada), propuesta: p.data, referencias: refs }),
+      caras.analizarCuadro(portada, { minArea: 0.002, minScore: 0.6, maxGiro: 0.75, minNitidez: 2 }).then((r) => { enPortada = r; }, () => {}), // piel de IA = poca "nitidez"
+    ]);
     // Parecido objetivo: compara las caras de la portada con la huella de cada actor (episodio o biblioteca).
     const objetivos = [];
     for (const c of ep.cast || []) {
@@ -360,8 +413,9 @@ async function hEvaluar({ propuestaId, key, prioridad, sinReintento }) {
       const h = c.huella || (c.actorId ? await biblioteca.huellaDe(c.actorId) : null);
       if (h) objetivos.push({ personaje: c.personaje, huella: h });
     }
-    if (objetivos.length) {
-      const enPortada = await caras.analizarCuadro(await storage.leer(key), { minArea: 0.002, minScore: 0.6, maxGiro: 0.75, minNitidez: 2 }).catch(() => []); // piel de IA = poca "nitidez"
+    // Sin caras detectadas no se puede medir: no se castiga (evita repintados pagados por un falso "no se parece").
+    if (objetivos.length && !enPortada?.length) ev.sinMedicion = true; // se avisa en la tarjeta
+    if (objetivos.length && enPortada?.length) {
       ev.parecido = objetivos.map((o) => ({
         personaje: o.personaje,
         sim: Math.round(Math.max(0, ...enPortada.map((c) => caras.similitud(o.huella, c.huella))) * 100) / 100,
@@ -623,6 +677,8 @@ async function hVigilante() {
     WHERE estado = 'procesando' AND actualizado < now() - interval '15 minutes' AND NOT ${VIVO("ingesta", "episodioId", "e.id")}`));
   contar("propuestas", await q(`UPDATE episodios e SET estado = 'error', error = 'Se interrumpió. Dale "Intentar de nuevo".', actualizado = now()
     WHERE estado IN ('en_cola','pensando') AND actualizado < now() - interval '10 minutes' AND NOT ${VIVO("propuestas", "episodioId", "e.id")}`));
+  contar("formatos", await q(`UPDATE formatos f SET estado = 'error', error = 'Se interrumpió. Dale "Otra vez".', actualizado = now()
+    WHERE estado IN ('en_cola','generando') AND actualizado < now() - interval '20 minutes' AND NOT ${VIVO("formato", "formatoId", "f.id")}`));
   // Las reparaciones de abajo no cambian "actualizado" hasta el final, para no taparse entre ellas.
   const viejo = `(SELECT actualizado FROM episodios WHERE id = p.episodio_id) < now() - interval '10 minutes'`;
   const tocados = new Set();
@@ -692,11 +748,21 @@ export async function iniciarWorkers() {
     const p = await repo.propuesta(propuestaId);
     if (p) await repo.tocarEpisodio(p.episodio_id);
   }, c.claude);
+  await trabajo("formato", hFormato, fallaFormato, c.images);
   await trabajo("paquete", hPaquete, async ({ episodioId }, e) =>
     q("UPDATE episodios SET eligiendo = false, error = $2, actualizado = now() WHERE id = $1", [episodioId, msg(e, "No se pudieron escribir la descripción y los tags.")]), c.claude);
   // Los videos originales pesan mucho: se borran tras VIDEO_RETENTION_DAYS (las portadas y cuadros se quedan).
   await trabajo("limpieza", async () => {
     const dias = Number(process.env.VIDEO_RETENTION_DAYS || 7);
+    // Subidas de video interrumpidas (el proceso se reinició a media subida): sus temporales se borran a las 12 h.
+    if (!storage.esS3) {
+      const carpeta = storage.rutaLocal("videos/x.mp4").replace(/x\.mp4$/, "");
+      for (const f of await fs.readdir(carpeta).catch(() => [])) {
+        if (!f.startsWith(".subida-")) continue;
+        const st = await fs.stat(carpeta + f).catch(() => null);
+        if (st && Date.now() - st.mtimeMs > 12 * 3600e3) await fs.rm(carpeta + f, { force: true });
+      }
+    }
     const viejos = await all(`SELECT id, video->>'key' AS key FROM episodios WHERE video->>'key' IS NOT NULL AND creado < now() - make_interval(days => $1) AND estado <> 'procesando' LIMIT 500`, [dias]);
     for (const v of viejos) {
       await storage.borrar(v.key);

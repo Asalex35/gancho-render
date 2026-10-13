@@ -82,7 +82,7 @@ export const tendencias = (region = "MX") => guardado(`t|${region}`, async () =>
 
 // Recibe texto con links (uno por línea o separados por espacios). Devuelve { videos, fallidos }.
 export async function leerLinks(entrada) {
-  const links = String(entrada || "").split(/[\s,]+/).filter(Boolean).slice(0, 30);
+  const links = String(entrada || "").split(/[\s,]+/).filter(Boolean).slice(0, 10);
   const videos = [], fallidos = [];
   for (const l of links) {
     try {

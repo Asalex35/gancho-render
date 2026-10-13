@@ -13,8 +13,8 @@ export async function sembrarCanales() {
 export const canal = (id) => one("SELECT * FROM canales WHERE id = $1", [id]);
 export const canales = () => all("SELECT * FROM canales ORDER BY creado");
 
-export async function episodio(id) {
-  const ep = await one("SELECT * FROM episodios WHERE id = $1", [id]);
+export async function episodio(id, { ligero = false } = {}) {
+  const ep = await one(ligero ? `SELECT *, (video - 'transcripcion' - 'subtitulos') || jsonb_build_object('tieneTexto', video ? 'transcripcion') AS video FROM episodios WHERE id = $1` : "SELECT * FROM episodios WHERE id = $1", [id]);
   if (!ep) return null;
   ep.propuestas = await all(
     `SELECT p.*, (SELECT count(*)::int FROM versiones v WHERE v.propuesta_id = p.id) AS n_versiones
@@ -45,7 +45,7 @@ export async function usoHoy(usuario) {
 
 // Formato que consume la interfaz.
 export function publicarEpisodio(ep) {
-  const video = ep.video ? { ...ep.video, transcripcion: undefined, subtitulos: undefined, tieneTexto: Boolean(ep.video.transcripcion) } : null;
+  const video = ep.video ? { ...ep.video, transcripcion: undefined, subtitulos: undefined, tieneTexto: Boolean(ep.video.transcripcion || ep.video.tieneTexto) } : null;
   return {
     ...ep,
     video,

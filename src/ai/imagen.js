@@ -30,7 +30,7 @@ export function estado() {
 
 // refs: [{ url?, base64, mime }] en el mismo orden que menciona el prompt.
 // Devuelve { proveedor, taskId } (asíncrono, hay que consultar) o { proveedor, buffer } (ya lista).
-export async function generar({ prompt, refs, modelo, evitar = [], alCambiar }) {
+export async function generar({ prompt, refs, modelo, evitar = [], alCambiar, aspecto = "16:9", resolucion }) {
   const candidatos = orden().filter((p) => !evitar.includes(p));
   if (!candidatos.length) throw Object.assign(new Error("No hay ningún proveedor de imagen disponible."), { publico: true });
   // Si todos están "saltados", se intenta igual con el primero (mejor intentar que fallar sin probar).
@@ -42,9 +42,9 @@ export async function generar({ prompt, refs, modelo, evitar = [], alCambiar }) 
       if (i > 0 && alCambiar) await alCambiar(p, errores.at(-1)?.message);
       if (p === "nanobanana") {
         const urls = refs.map((r) => r.url).filter(Boolean);
-        return { proveedor: p, taskId: await nb.crearTarea({ modelo, prompt, imageUrls: urls.length === refs.length ? urls : [] }) };
+        return { proveedor: p, taskId: await nb.crearTarea({ modelo, prompt, imageUrls: urls.length === refs.length ? urls : [], aspecto, resolucion }) };
       }
-      const buffer = p === "google" ? await generarGoogle({ prompt, refs, modelo }) : await generarFal({ prompt, refs });
+      const buffer = p === "google" ? await generarGoogle({ prompt, refs, modelo, aspecto, resolucion }) : await generarFal({ prompt, refs, aspecto });
       return { proveedor: p, buffer };
     } catch (e) {
       registrarFalla(p);

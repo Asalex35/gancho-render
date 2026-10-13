@@ -8,9 +8,28 @@ import sharp from "sharp";
 
 const N_CUADROS = 48;
 
+// El video lo sube el usuario: ffmpeg no debe adivinar el formato por el contenido (un "mp4" que en realidad es una
+// lista HLS/concat podría hacer que el servidor lea direcciones internas). Se fuerza el formato por extensión y
+// solo se permiten los protocolos necesarios (solo "file" para archivos locales, incluidas las listas concat del propio servidor).
+const DEMUXER = { mp4: "mov", m4v: "mov", mov: "mov", webm: "matroska", mkv: "matroska" };
+function blindar(args) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "-i" && args[i - 2] !== "-f") {
+      const entrada = String(args[i + 1]);
+      const esUrl = /^https:\/\//.test(entrada);
+      const ext = entrada.split("?")[0].split(".").pop().toLowerCase();
+      out.push("-protocol_whitelist", esUrl ? "https,tls,tcp,crypto" : "file,pipe");
+      if (DEMUXER[ext]) out.push("-f", DEMUXER[ext]);
+    }
+    out.push(args[i]);
+  }
+  return out;
+}
+
 function ffmpeg(args, { timeoutMs = 15 * 60e3 } = {}) {
   return new Promise((ok, no) => {
-    const p = spawn(ffmpegPath, ["-hide_banner", "-nostdin", ...args], { stdio: ["ignore", "ignore", "pipe"] });
+    const p = spawn(ffmpegPath, ["-hide_banner", "-nostdin", ...blindar(args)], { stdio: ["ignore", "ignore", "pipe"] });
     let err = "";
     p.stderr.on("data", (d) => { err = (err + d).slice(-20000); });
     const t = setTimeout(() => p.kill("SIGKILL"), timeoutMs);

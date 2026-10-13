@@ -3,6 +3,7 @@
 databases:
   - name: gancho-db
     plan: basic-256mb
+    ipAllowList: []          # solo los servicios de Render pueden conectarse
     databaseName: gancho
 
 envVarGroups:
@@ -21,6 +22,8 @@ envVarGroups:
       - key: SESSION_SECRET
         generateValue: true
       - key: CALLBACK_SECRET
+        generateValue: true
+      - key: LINK_SECRET
         generateValue: true
       - key: ANTHROPIC_API_KEY
         sync: false

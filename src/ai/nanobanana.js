@@ -33,15 +33,15 @@ export const MODELOS = {
   pro: { nombre: "Nano Banana Pro", ruta: "/nanobanana/generate-pro", maxRefs: 8 },
 };
 
-export async function crearTarea({ modelo = "nb2", prompt, imageUrls = [] }) {
+export async function crearTarea({ modelo = "nb2", prompt, imageUrls = [], aspecto = "16:9", resolucion }) {
   if (config.mockImages) return `mock_${Date.now()}_${Math.random().toString(36).slice(2)}|${prompt.slice(0, 120)}`;
   const m = MODELOS[modelo] || MODELOS.nb2;
   const body = {
     prompt: prompt.slice(0, 19000),
     imageUrls: imageUrls.slice(0, m.maxRefs),
-    aspectRatio: "16:9",
+    aspectRatio: aspecto,
     // YouTube muestra la portada a 1280x720 como máximo: 1K (1376x768) alcanza y se genera más rápido que 2K o 4K.
-    resolution: modelo === "pro" ? (process.env.PRO_RESOLUTION || "1K") : config.imageResolution,
+    resolution: resolucion || (modelo === "pro" ? (process.env.PRO_RESOLUTION || "1K") : config.imageResolution),
   };
   if (modelo === "nb2") body.outputFormat = "jpg";
   // Pro exige callback. Solo lo usamos como aviso; el estado real se consulta con la cola.

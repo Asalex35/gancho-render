@@ -1,6 +1,6 @@
 {
   "name": "gancho",
-  "version": "0.4.6",
+  "version": "0.5.0",
   "private": true,
   "description": "Gancho by Prismáticoos: portadas, títulos, descripción y tags para YouTube",
   "type": "module",
@@ -17,6 +17,7 @@
     "@aws-sdk/client-s3": "^3.1144.0",
     "@aws-sdk/s3-request-presigner": "^3.1144.0",
     "archiver": "^8.0.0",
+    "compression": "^1.8.2",
     "express": "^4.22.3",
     "express-rate-limit": "^8.7.0",
     "ffmpeg-static": "^5.3.0",

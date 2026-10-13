@@ -28,7 +28,7 @@ export const config = {
   claudeModelCreativo: env.CLAUDE_MODEL_CREATIVO || "claude-sonnet-5-5",
   sessionSecret: env.SESSION_SECRET || (PROD ? requerido("SESSION_SECRET") : crypto.randomBytes(32).toString("hex")),
   // Firma de los enlaces temporales de fotos para Nano Banana (modo almacenamiento local)
-  linkSecret: env.LINK_SECRET || env.SESSION_SECRET || crypto.randomBytes(32).toString("hex"),
+  linkSecret: env.LINK_SECRET || (env.SESSION_SECRET ? crypto.createHmac("sha256", env.SESSION_SECRET).update("enlaces-publicos").digest("hex") : crypto.randomBytes(32).toString("hex")),
   callbackSecret: env.CALLBACK_SECRET || crypto.randomBytes(16).toString("hex"),
   admin: { user: env.ADMIN_USER, password: env.ADMIN_PASSWORD },
   legacyUsers: env.APP_USERS || "",

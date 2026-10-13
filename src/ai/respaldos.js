@@ -13,11 +13,11 @@ const MODELOS_GOOGLE = { nb2: "gemini-3.1-flash-image", pro: "gemini-3-pro-image
 
 export const googleDisponible = () => Boolean(process.env.GOOGLE_API_KEY);
 
-export async function generarGoogle({ prompt, refs, modelo }) {
+export async function generarGoogle({ prompt, refs, modelo, aspecto = "16:9", resolucion }) {
   const model = process.env.GOOGLE_IMAGE_MODEL || MODELOS_GOOGLE[modelo] || MODELOS_GOOGLE.nb2;
   const body = {
     contents: [{ role: "user", parts: [{ text: prompt }, ...refs.map((r) => ({ inline_data: { mime_type: r.mime, data: r.base64 } }))] }],
-    generationConfig: { responseModalities: ["IMAGE"], imageConfig: { aspectRatio: "16:9", imageSize: process.env.IMAGE_RESOLUTION || "1K" } },
+    generationConfig: { responseModalities: ["IMAGE"], imageConfig: { aspectRatio: aspecto, imageSize: resolucion || process.env.IMAGE_RESOLUTION || "1K" } },
   };
   let res;
   try {
@@ -41,9 +41,11 @@ export async function generarGoogle({ prompt, refs, modelo }) {
 // https://fal.ai/models/fal-ai/bytedance/seedream/v4/edit
 export const falDisponible = () => Boolean(process.env.FAL_KEY);
 
-export async function generarFal({ prompt, refs }) {
+// Medidas para Seedream según la proporción pedida.
+const TAM_FAL = { "16:9": [1344, 756], "9:16": [756, 1344], "4:5": [1088, 1360], "1:1": [1152, 1152], "2:3": [1024, 1536] };
+export async function generarFal({ prompt, refs, aspecto = "16:9" }) {
   const ruta = refs.length ? "fal-ai/bytedance/seedream/v4/edit" : "fal-ai/bytedance/seedream/v4/text-to-image";
-  const body = { prompt, image_size: { width: 1344, height: 756 }, num_images: 1, enable_safety_checker: true };
+  const body = { prompt, image_size: { width: (TAM_FAL[aspecto] || TAM_FAL["16:9"])[0], height: (TAM_FAL[aspecto] || TAM_FAL["16:9"])[1] }, num_images: 1, enable_safety_checker: true };
   if (refs.length) body.image_urls = refs.slice(0, 10).map((r) => `data:${r.mime};base64,${r.base64}`);
   let res;
   try {
@@ -59,7 +61,7 @@ export async function generarFal({ prompt, refs }) {
   if (url.startsWith("data:")) return Buffer.from(url.split(",")[1], "base64");
   const u = new URL(url);
   if (u.protocol !== "https:") throw new ErrorProveedor("Seedream", "URL no segura");
-  const img = await fetch(u, { signal: conTiempo(60e3) });
+  const img = await fetch(u, { signal: conTiempo(60e3), redirect: "error" });
   if (!img.ok) throw new ErrorProveedor("Seedream", `descarga falló (${img.status})`);
   return Buffer.from(await img.arrayBuffer());
 }

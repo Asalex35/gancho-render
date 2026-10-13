@@ -1,5 +1,24 @@
 # Cambios de Gancho
 
+## 0.5.0 — 2026-10-13
+### Nuevo: versiones para redes y Prisma Plus
+- Botón **"✦ Redes y Prisma Plus"** en cada portada lista: TikTok/Reels 9:16 (estilo apps de series como DramaShorts/ReelShort, con título grande), Instagram 4:5, Facebook 1:1, y para **Prisma Plus** póster de película 2:3 y banner de la app 16:9 (fotorrealista, nivel cine, en 2K).
+- Claude diseña cada versión (composición y texto dentro de la imagen) con los mismos actores y sus fotos; se descargan a la medida exacta de cada plataforma.
+- Nueva sección **Prisma Plus** en el menú con todos los pósters y banners.
+### Seguridad (auditoría completa)
+- Las rutas distinguen mayúsculas: `/api/Episodios/...` ya no se salta la revisión de dueño.
+- Subida de videos: solo la llave que emitió el servidor para ese usuario (firma), solo extensiones de video, una a la vez por usuario y revisión de espacio libre; el temporal se escribe en el mismo disco.
+- ffmpeg fuerza el formato por extensión y solo permite los protocolos necesarios (un "video" falso ya no puede leer direcciones internas).
+- Login: límite por cuenta además de por IP; la contraseña se revisa sin congelar el servidor; la cookie ya no lleva parte del hash.
+- Llave propia para los enlaces públicos de fotos; aviso de Nano Banana con comparación segura y límite; avisos solo a Slack/Google Chat/Discord y sin @everyone; descargas sin redirecciones; CSP más estricta; tiempo máximo por petición.
+- Render: la base de datos ya no acepta conexiones desde internet (`ipAllowList: []`); `LINK_SECRET` propio.
+### Velocidad y costo
+- La revisión de la portada (Claude) y el detector de caras corren en paralelo; Claude revisa con poco esfuerzo y una imagen más chica.
+- Si el detector no encuentra caras ya no se castiga el parecido (evita repintados pagados por error).
+- Colas de imagen revisan cada medio segundo; el aviso de Nano Banana ya no duplica la revisión.
+- Portadas guardadas a máx. 1920 px (más ligeras); compresión de la página (~4 veces menos datos); el episodio ya no manda la transcripción en cada refresco.
+- Claude con dos filas (rápida y creativa) para que la revisión no espere detrás de las propuestas.
+
 ## 0.4.6 — 2026-10-12
 - Fotos de actores con la cara chica (cuerpo completo, grupo): si no aparece una cara, Gancho la busca con zoom en partes de la foto.
 

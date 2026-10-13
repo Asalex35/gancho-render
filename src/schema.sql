@@ -165,3 +165,24 @@ ALTER TABLE competencia ADD COLUMN IF NOT EXISTS duracion text;
 
 -- 2026-10-12: la voz de CLAC ya no usa edades ni nombres (solo si no se editó a mano).
 UPDATE canales SET voz = 'Tercera persona. Arquetipo social (millonario, mesera, payaso, suegra, novia) + una acción tabú + cierre abierto (''sin imaginar'', ''y así reaccionó'', ''su vida cambió para siempre''). Sin edades ni nombres.' WHERE id = 'CLAC' AND voz = 'Tercera persona. Etiqueta social + edad o nombre propio. Cierre con ''sin imaginar'' / ''sin saber''.';
+
+-- Versiones de una portada para redes (TikTok, Instagram, Facebook) y para Prisma Plus (póster y banner de la app).
+CREATE TABLE IF NOT EXISTS formatos (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  propuesta_id uuid NOT NULL REFERENCES propuestas(id) ON DELETE CASCADE,
+  episodio_id  uuid NOT NULL REFERENCES episodios(id) ON DELETE CASCADE,
+  tipo         text NOT NULL,
+  estado       text NOT NULL DEFAULT 'en_cola',
+  imagen       jsonb NOT NULL DEFAULT '{}'::jsonb,
+  textos       jsonb,
+  prompt       text,
+  error        text,
+  creado_por   text NOT NULL,
+  creado       timestamptz NOT NULL DEFAULT now(),
+  actualizado  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS formatos_prop_idx ON formatos (propuesta_id, creado DESC);
+CREATE INDEX IF NOT EXISTS formatos_usuario_idx ON formatos (creado_por, tipo, creado DESC);
+
+-- Búsqueda rápida del aviso de Nano Banana por taskId.
+CREATE INDEX IF NOT EXISTS propuestas_task_idx ON propuestas ((imagen->>'taskId')) WHERE imagen->>'estado' = 'generando';
