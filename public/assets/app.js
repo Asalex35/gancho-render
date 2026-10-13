@@ -766,6 +766,9 @@ function tarjetaFormato(f, recargar) {
       f.estado === "error" ? h("button", { class: "btn small", type: "button", onclick: async () => {
         try { await api(f.propuesta_id ? `/api/propuestas/${f.propuesta_id}/formatos` : `/api/episodios/${f.episodio_id}/formatos`, { method: "POST", body: { tipos: [f.tipo] } }); toast("Pintando otra vez…"); recargar(); } catch (e) { toast(e.message, true); }
       } }, "Otra vez") : null,
+      ocupado && Date.now() - new Date(f.creado).getTime() > 20 * 60e3 ? h("button", { class: "btn small ghost danger", type: "button", onclick: async () => {
+        try { await api(`/api/formatos/${f.id}`, { method: "DELETE" }); recargar(); } catch (e) { toast(e.message, true); }
+      } }, "Cancelar (se atoró)") : null,
       !ocupado ? h("button", { class: "btn small ghost danger", type: "button", onclick: async () => {
         try { await api(`/api/formatos/${f.id}`, { method: "DELETE" }); recargar(); } catch (e) { toast(e.message, true); }
       } }, "Borrar") : null));

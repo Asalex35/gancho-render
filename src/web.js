@@ -700,7 +700,8 @@ export function crearApp() {
     res.set({ "Content-Type": "image/jpeg", "Content-Disposition": adjunto(f.titulo, "jpg", spec.nombre) }).send(buf);
   }));
   app.delete("/api/formatos/:id", envolver(async (req, res) => {
-    const f = await one("DELETE FROM formatos WHERE id = $1 AND estado IN ('lista','error') RETURNING imagen", [uuid(req.params.id)]);
+    // También se puede quitar una que quedó atorada más de 20 min (nunca deja algo colgado para siempre).
+    const f = await one(`DELETE FROM formatos WHERE id = $1 AND (estado IN ('lista','error') OR creado < now() - interval '20 minutes') RETURNING imagen`, [uuid(req.params.id)]);
     if (!f) throw publico("No se puede borrar mientras se está haciendo.", 409);
     await storage.borrar(f.imagen?.key); await storage.borrar(f.imagen?.mini);
     res.json({ ok: true });
@@ -817,6 +818,14 @@ export function crearApp() {
     const u = await one(`UPDATE usuarios SET ${sets.join(", ")} WHERE id = $1 RETURNING id, usuario, rol, activo`, vals);
     olvidarUsuario(id);
     res.json(u);
+  }));
+  // Diagnóstico de una versión atorada: estado en la base y sus trabajos en la cola.
+  app.get("/api/admin/diagnostico/formato/:id", soloAdmin, envolver(async (req, res) => {
+    const id = uuid(req.params.id);
+    const f = await one("SELECT tipo, estado, error, imagen, creado, actualizado FROM formatos WHERE id = $1", [id]);
+    const trabajos = await all(`SELECT state, retry_count, created_on, started_on, completed_on, left(coalesce(output::text, ''), 300) AS salida
+      FROM pgboss.job WHERE name = 'formato' AND data->>'formatoId' = $1 ORDER BY created_on DESC LIMIT 10`, [id]).catch((e) => [{ error: e.message }]);
+    res.json({ formato: f && { ...f, imagen: { ...f.imagen, taskId: f.imagen?.taskId ? "sí" : "no" } }, trabajos });
   }));
   app.get("/api/admin/uso", soloAdmin, envolver(async (req, res) => {
     const dias = await all(`SELECT dia::text, usuario, imagenes, textos FROM uso WHERE dia > current_date - 14 ORDER BY dia DESC, imagenes DESC`);
