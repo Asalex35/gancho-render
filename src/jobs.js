@@ -709,8 +709,17 @@ async function hIngesta({ episodioId, usuario }) {
 
 // ---------- Vigilante: repara lo que se quedó pegado ----------
 // Un registro está "pegado" si lleva más de 10 min en un estado de espera y no existe ningún trabajo vivo para él.
-const VIVO = (cola, campo, col) => `EXISTS (SELECT 1 FROM pgboss.job j WHERE j.name = '${cola}' AND j.state IN ('created','retry','active') AND j.data->>'${campo}' = ${col}::text)`;
+// Un trabajo "activo" de hace más que su tiempo máximo es de un proceso que murió (reinicio o deploy): no cuenta como vivo.
+const VIVO = (cola, campo, col) => `EXISTS (SELECT 1 FROM pgboss.job j WHERE j.name = '${cola}' AND j.state IN ('created','retry','active')
+  AND (j.state <> 'active' OR j.started_on > now() - interval '${(COLAS[cola]?.expireInSeconds || 900) + 300} seconds') AND j.data->>'${campo}' = ${col}::text)`;
 async function hVigilante() {
+  // Trabajos que quedaron "activos" porque el proceso se reinició a la mitad: se liberan para que se reintenten o reparen.
+  for (const [cola, o] of Object.entries(COLAS)) {
+    const zombis = await all(`SELECT id FROM pgboss.job WHERE name = $1 AND state = 'active' AND started_on < now() - make_interval(secs => $2)`,
+      [cola, (o.expireInSeconds || 900) + 300]).catch(() => []);
+    for (const z of zombis) await boss.fail(cola, z.id, { error: "El proceso se reinició mientras corría" }).catch((e) => console.warn("Vigilante:", e.message));
+    if (zombis.length) console.log(`Vigilante: ${zombis.length} trabajo(s) de "${cola}" liberados tras un reinicio`);
+  }
   const n = {};
   const contar = (k, r) => (n[k] = (r.rowCount ?? r.length) || 0);
   contar("ingesta", await q(`UPDATE episodios e SET estado = 'error', error = 'El procesamiento se interrumpió. Dale reintentar.', video = video || '{"etapa":"error"}'::jsonb, actualizado = now()
