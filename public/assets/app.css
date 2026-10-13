@@ -144,7 +144,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); outline
 .why { margin: 0; padding-left: 18px; display: grid; gap: 5px; font-size: .88rem; }
 .risk { font-size: .82rem; color: var(--muted); border-left: 2px solid var(--mid); padding-left: 10px; }
 .probs { font-size: .82rem; color: var(--bad); border-left: 2px solid var(--bad); padding-left: 10px; }
-.acciones { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.acciones { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .acciones .full { grid-column: 1 / -1; }
 
 /* Vista de celular: tamaño real de una miniatura en el feed */

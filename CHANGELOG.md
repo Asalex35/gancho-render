@@ -1,5 +1,10 @@
 # Cambios de Gancho
 
+## 0.6.0 — 2026-10-13
+- **✎ Ajustar**: si una portada gustó pero le quieres cambios ("la mamá más grande", "quita el globo"), Gancho edita esa misma imagen y solo cambia lo pedido, con las caras de los actores como referencia. Botones rápidos ("Caras más grandes", "Más brillante"…). La anterior queda en "Anteriores". 18 créditos.
+- "Rehacer" ahora explica que es para hacer otra idea desde cero.
+- **Formulario manual más fácil**: 2 pasos ("Cuéntame la historia" con ejemplo, y "¿Quiénes salen?" con el actor y su papel). Edad, ropa, papel en el drama, giro, escena, desenlace, notas, nombre y duración quedan en "Más detalles (opcional)": Gancho los deduce si se dejan vacíos.
+
 ## 0.5.3 — 2026-10-13
 - **Solo redes o Prisma Plus**: se puede pedir solo TikTok, solo Facebook, solo el póster, etc., directo desde la historia del episodio, sin hacer antes la portada de YouTube. Botón "✦ Solo redes o Prisma Plus" al empezar y "✦ Redes y Prisma Plus" siempre arriba del episodio.
 - En Inicio, si un episodio solo tiene versiones de redes, se muestra la última como miniatura.

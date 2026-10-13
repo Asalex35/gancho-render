@@ -176,6 +176,21 @@ function unaCara(refs, personajes) {
     " Background extras must also look clearly different from the reference actors.";
 }
 
+// Edición de una portada que ya gustó: conserva todo y cambia solo lo pedido.
+function promptAjuste(cambios, refs, extra) {
+  let n = 0;
+  const mapa = refs.map((r) => {
+    const idx = r.fotos.map(() => ++n);
+    return r.base ? "Reference image 1: the CURRENT thumbnail to edit."
+      : `Reference image${idx.length > 1 ? "s" : ""} ${idx.join(", ")}: the real actor who plays ${r.personaje} (identity reference only).`;
+  });
+  return `${mapa.join("\n")}
+EDIT reference image 1. Keep EVERYTHING the same (people, faces, wardrobe, composition, framing, lighting, colors, 16:9 format)
+EXCEPT these changes requested by the team:
+${cambios}
+Every face must stay identical to the real actors in the references. Photorealistic, no text, no letters, no watermark.${extra ? `\n\nALSO FIX: ${extra}` : ""}`;
+}
+
 function promptConReferencias(prompt, refs, extra, personajes = [], { luz: conLuz = true } = {}) {
   let n = 0;
   const mapa = refs.map((r) => {
@@ -222,7 +237,14 @@ async function hImagen({ propuestaId, usuario, extra, prioridad, evitar = [], co
     const conFoto = refs.filter((r) => !r.escena).map((r) => ({ personaje: r.personaje, n: r.fotos.length }));
     const sinFoto = (p.data.personajes_en_portada || []).filter((n) => !conFoto.some((c) => ia.mismoPersonaje(c.personaje, n)));
     console.log(`[imagen] ${propuestaId.slice(0, 8)} con foto: ${conFoto.map((c) => `${c.personaje}(${c.n})`).join(", ") || "nadie"} · sin foto: ${sinFoto.join(", ") || "nadie"}`);
-    const prompt = promptConReferencias(p.data.prompt_imagen, refs, extra, p.data.personajes_en_portada || []);
+    // "Ajustar": se edita la portada actual (va primero) con los cambios pedidos, en vez de pintarla de cero.
+    const aj = p.imagen.ajuste;
+    if (aj?.base) {
+      const actores = refs.filter((r) => !r.escena);
+      const porActor = Math.max(1, Math.floor(((nb.MODELOS[ep.modelo]?.maxRefs || 8) - 1) / Math.max(1, actores.length)));
+      refs.splice(0, refs.length, { base: true, fotos: [aj.base] }, ...actores.map((r) => ({ ...r, fotos: r.fotos.slice(0, porActor) })));
+    }
+    const prompt = aj?.base ? promptAjuste(aj.cambios, refs, extra) : promptConReferencias(p.data.prompt_imagen, refs, extra, p.data.personajes_en_portada || []);
     const r = await imagen.generar({
       prompt, refs: await prepararRefs(refs), modelo: ep.modelo, evitar,
       alCambiar: (prov, err) => avisarCambio(ep.canal, prov, err),

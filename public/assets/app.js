@@ -339,7 +339,7 @@ async function vistaEditor(id) {
   if (!vigente(t0)) return;
   const borradorKey = "gancho-borrador";
   const base = existente ? { ...existente.brief, titulo: existente.titulo, canal: existente.canal, modelo: existente.modelo, cast: existente.cast }
-    : local.get(borradorKey) || { canal: me.canales[0]?.id, modelo: "pro", cast: [{ personaje: "", rol: "transgresor" }, { personaje: "", rol: "testigo" }] };
+    : local.get(borradorKey) || { canal: me.canales[0]?.id, modelo: "pro", cast: [{ personaje: "", rol: "" }, { personaje: "", rol: "" }] };
   const st = structuredClone(base);
   st.cast = (st.cast || []).map((c) => ({ ...c }));
   const guardarBorrador = () => { if (!existente) local.set(borradorKey, st); };
@@ -363,10 +363,12 @@ async function vistaEditor(id) {
           h("div", { class: "stack", style: { gap: "4px" } }, h("b", {}, actor ? `${actor.nombre}${c.reconocido ? " · reconocido por Gancho" : ""}` : c.fotos?.length ? "Cara tomada del video" : "Elige quién lo interpreta"),
             h("button", { class: "btn small", type: "button", onclick: () => elegirActor(c) }, actor ? "Cambiar actor" : "Elegir actor o subir fotos")),
           h("button", { class: "btn small ghost danger", type: "button", "aria-label": "Quitar personaje", onclick: () => { st.cast.splice(i, 1); guardarBorrador(); pintarCast(); } }, "Quitar")),
-        h("div", { class: "r2" }, inp("personaje", "Personaje (ej. Elena)", "Nombre del personaje"), inp("edad", "Edad", "Edad")),
-        seg(ROLES, c.rol, (v) => { c.rol = v; guardarBorrador(); }),
-        inp("vestuario", "Vestuario (ej. vestido de novia, uniforme de sirvienta)", "Vestuario"));
-    }), h("button", { class: "btn", type: "button", onclick: () => { st.cast.push({ personaje: "", rol: "otro" }); pintarCast(); } }, "+ Agregar personaje"));
+        inp("personaje", "¿Qué papel hace? (ej. la mamá, la novia, el enfermero)", "Papel del personaje"),
+        h("details", {}, h("summary", { class: "muted", style: { cursor: "pointer", fontSize: ".85rem" } }, "Detalles (opcional · Gancho los deduce)"),
+          h("div", { class: "stack", style: { gap: "8px", marginTop: "8px" } },
+            h("div", { class: "r2" }, inp("edad", "Edad (ej. 55)", "Edad"), inp("vestuario", "Ropa (ej. bata de hospital)", "Vestuario")),
+            h("div", { class: "campo-seg" }, h("span", { class: "etq" }, "Papel en el drama"), seg({ "": "Que Gancho decida", ...ROLES }, c.rol || "", (v) => { c.rol = v; guardarBorrador(); })))));
+    }), h("button", { class: "btn", type: "button", onclick: () => { st.cast.push({ personaje: "", rol: "" }); pintarCast(); } }, "+ Agregar personaje"));
   }
   function elegirActor(c) {
     abrirModal(
@@ -396,30 +398,31 @@ async function vistaEditor(id) {
     h("div", { class: "head", style: { marginBottom: 0 } },
       h("div", {}, h("div", { class: "eyebrow" }, existente ? "Editar episodio" : "Nuevo episodio"), h("h1", {}, existente ? existente.titulo : "Cuéntame la historia")),
       h("a", { class: "btn ghost", href: existente ? `#/ep/${existente.id}` : "#/" }, "Cancelar")),
-    h("div", { class: "grid2" },
-      h("section", { class: "panel stack" },
-        h("h2", {}, "1. La historia"),
-        h("div", { class: "campo-seg" }, h("span", { class: "etq" }, "Canal"), seg(opcionesCanal(), st.canal, (v) => { st.canal = v; guardarBorrador(); })),
+    h("section", { class: "panel stack" },
+      h("h2", {}, "1. Cuéntame la historia"),
+      h("div", { class: "campo-seg" }, h("span", { class: "etq" }, "Canal"), seg(opcionesCanal(), st.canal, (v) => { st.canal = v; guardarBorrador(); })),
+      campo("sinopsis", "¿De qué trata?", "Cuéntala como se la contarías a alguien: quién, qué pasa, el giro y cómo termina. Es lo único obligatorio.", true,
+        "Ej. Una madre orgullosa rechaza al prometido de su hija. En su cumpleaños se desmaya y en el hospital descubre que el enfermero que la cuida es ese mismo prometido…")),
+    h("section", { class: "panel stack" },
+      h("h2", {}, "2. ¿Quiénes salen?"),
+      h("p", { class: "muted", style: { margin: 0 } }, "Elige al actor de cada personaje para que la portada se parezca. Si no pones a nadie, Gancho inventa a los personajes."),
+      me.refsPublicas ? null : h("div", { class: "aviso" }, "Modo local: Nano Banana no ve las fotos de los actores hasta publicar la app."),
+      castBox),
+    h("details", { class: "panel" }, h("summary", { style: { cursor: "pointer", fontWeight: 600 } }, "Más detalles (opcional) · Gancho los deduce si los dejas vacíos"),
+      h("div", { class: "stack", style: { marginTop: "14px" } },
+        campo("momento", "La escena para la portada", "Si tienes una en mente.", true, "Ej. La mamá en el hospital descubre quién es su enfermero"),
+        campo("giro", "El giro principal", null, true, "Ej. El prometido que rechazó es quien la cuida"),
+        campo("desenlace", "Cómo termina", "Gancho lo usa para entender, pero nunca lo revela.", true),
+        campo("escenario", "Dónde pasa", null, false, "Iglesia, hospital, mansión…"),
+        campo("notas", "Notas para Gancho", null, true, "Ej. evitar armas, la protagonista siempre de rojo, sin logos"),
         campo("titulo", "Nombre interno", "Solo para encontrarlo aquí. No es el título de YouTube.", false, "Ej. La boda de Lucía"),
         (() => {
           const el = h("input", { type: "number", id: "f-duracion", min: "1", max: "600", step: "1", placeholder: "Ej. 45", style: { maxWidth: "160px" } });
           el.value = st.duracion_min || "";
           el.addEventListener("input", () => { st.duracion_min = el.value; guardarBorrador(); });
-          return h("label", {}, h("span", {}, "¿Cuánto dura el episodio? (minutos)"),
-            h("span", { class: "hint" }, "Ayuda a Gancho a ajustar título y descripción. Si pasa de 120 min, YouTube no lo dobla solo a otros idiomas."), el);
+          return h("label", {}, h("span", {}, "Duración del episodio (minutos)"), el);
         })(),
-        campo("sinopsis", "Sinopsis", "De qué trata, en 5 a 10 líneas. Es lo único obligatorio.", true),
-        campo("giro", "El giro principal", "Opcional: si lo dejas vacío, Claude lo deduce.", true, "Ej. Su hermana se fuga con el novio el día de la boda"),
-        campo("momento", "El momento más fuerte", "La escena que iría en la portada.", true, "Ej. La novia llorando sola en el piso de la iglesia"),
-        campo("desenlace", "Cómo termina", "Gancho lo usa para entender la historia, pero nunca lo revela.", true),
-        campo("escenario", "Escenario principal", null, false, "Iglesia, camión, escuela, mansión…"),
-        campo("notas", "Notas para Gancho", "Ej. evitar armas, la protagonista siempre de rojo.", true),
-        h("div", { class: "campo-seg" }, h("span", { class: "etq" }, "Modelo de imagen"), seg(me.modelos, st.modelo, (v) => { st.modelo = v; guardarBorrador(); }), h("span", { class: "hint" }, "Nano Banana 2 es más rápido. Pro respeta mejor varias caras a la vez."))),
-      h("section", { class: "panel stack" },
-        h("h2", {}, "2. El cast"),
-        h("p", { class: "muted", style: { margin: 0 } }, "Si lo dejas vacío, Claude arma los personajes desde la sinopsis (sin caras reales)."),
-        me.refsPublicas ? null : h("div", { class: "aviso" }, "Modo local: Nano Banana no ve las fotos de los actores hasta publicar la app."),
-        castBox)),
+        h("div", { class: "campo-seg" }, h("span", { class: "etq" }, "Modelo de imagen"), seg(me.modelos, st.modelo, (v) => { st.modelo = v; guardarBorrador(); }), h("span", { class: "hint" }, "Pro se parece más a los actores; Nano Banana 2 es más rápido.")))),
     h("div", { class: "row", style: { justifyContent: "flex-end" } },
       h("button", { class: "btn big", type: "button", onclick: () => enviar(false) }, existente ? "Solo guardar" : "Guardar sin generar"), btnGenerar)));
 }
@@ -574,7 +577,7 @@ function tarjeta(p, x, i, recargar) {
   } else {
     const s = img.inicio ? Math.round((Date.now() - img.inicio) / 1000) : 0;
     lienzo = h("div", { class: "lienzo shimmer" }, h("div", { class: "estado" }, h("div", { class: "spin" }),
-      x.autoReintento ? "La primera versión tenía defectos. Pintando otra…" : img.estado === "en_cola" ? "En la fila…" : "Pintando la portada…",
+      img.ajuste ? `Aplicando tus cambios: “${img.ajuste.slice(0, 60)}${img.ajuste.length > 60 ? "…" : ""}”` : x.autoReintento ? "La primera versión tenía defectos. Pintando otra…" : img.estado === "en_cola" ? "En la fila…" : "Pintando la portada…",
       s ? h("small", {}, `${s} s · suele tardar 30 a 90 s`) : null));
   }
 
@@ -636,7 +639,9 @@ function tarjeta(p, x, i, recargar) {
             elegir();
           } },
           elegida ? "✓ Elegida · regenerar textos" : p.origen === "auto" ? "Aprobar esta" : "Elegir esta"),
-        h("button", { class: "btn", type: "button", disabled: OCUPADA(x) || p.eligiendo, onclick: () => rehacer(x, recargar) }, x.rehaciendo ? "Rehaciendo…" : "Rehacer"),
+        h("button", { class: "btn", type: "button", disabled: img.estado !== "lista" || OCUPADA(x) || p.eligiendo, title: "Te gustó pero quieres cambiarle algo: se edita esta misma imagen",
+          onclick: () => ajustar(x, recargar) }, "✎ Ajustar"),
+        h("button", { class: "btn", type: "button", disabled: OCUPADA(x) || p.eligiendo, title: "No te gustó: Gancho hace otra idea desde cero", onclick: () => rehacer(x, recargar) }, x.rehaciendo ? "Rehaciendo…" : "Rehacer"),
         h("button", { class: "btn", type: "button", disabled: !x.nVersiones || OCUPADA(x) || p.eligiendo, onclick: () => versiones(x, recargar) }, `Anteriores${x.nVersiones ? ` (${x.nVersiones})` : ""}`)),
       h("details", {}, h("summary", { class: "eyebrow", style: { cursor: "pointer" } }, "Más detalles"),
         h("div", { class: "stack", style: { marginTop: "10px", gap: "10px" } }, movil,
@@ -829,6 +834,24 @@ async function vistaPrisma() {
     h("div", { class: "head" }, h("div", {}, h("div", { class: "eyebrow" }, "Prisma Plus"), h("h1", {}, "Pósters y banners de cine para la app")), interruptorEquipo(() => vistaPrisma())),
     caja);
   await recargar();
+}
+
+// Ajustar: la portada gustó, pero se le quieren cambios puntuales (se edita la misma imagen).
+function ajustar(x, recargar) {
+  const caja = h("textarea", { rows: 3, placeholder: "Ej. que la mamá salga más grande y al frente, quítale el globo y que el enfermero se vea sorprendido" });
+  const rapidos = ["Caras más grandes", "Más brillante y colorida", "Expresión más fuerte", "Que se parezca más al actor", "Cambiar el fondo", "Quitar objetos raros o letras"];
+  const ir = h("button", { class: "btn primary", type: "button", onclick: async () => {
+    ir.disabled = true;
+    try { await api(`/api/propuestas/${x.id}/ajustar`, { method: "POST", body: { cambios: caja.value } }); cerrarModal(); toast("Aplicando tus cambios… tarda 1 a 2 min"); recargar(); }
+    catch (e) { toast(e.message, true); ir.disabled = false; }
+  } }, `Ajustar portada · ${me.creditosPorImagen || 18} créditos`);
+  abrirModal(h("h2", {}, "¿Qué le cambio?"),
+    h("p", { class: "muted", style: { margin: 0 } }, "Gancho edita esta misma imagen: deja igual lo que te gustó y cambia solo lo que pidas. La anterior queda en «Anteriores»."),
+    h("img", { src: media(x.imagen.mini || x.imagen.key), alt: "", style: { width: "100%", maxWidth: "420px", borderRadius: "10px" } }),
+    caja,
+    h("div", { class: "chips" }, rapidos.map((t) => h("button", { class: "chip", type: "button", onclick: () => { caja.value = caja.value ? `${caja.value.replace(/[.\s]+$/, "")}. ${t}` : t; caja.focus(); } }, `+ ${t}`))),
+    h("div", { class: "foot" }, h("button", { class: "btn ghost", type: "button", onclick: cerrarModal }, "Cancelar"), ir));
+  caja.focus();
 }
 
 function rehacer(x, recargar) {

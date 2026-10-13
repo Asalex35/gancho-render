@@ -208,7 +208,7 @@ export function crearApp() {
       // Cuadros del video (flujo automático): solo llaves válidas de la carpeta "cuadros".
       const fotos = (Array.isArray(c.fotos) ? c.fotos : []).filter((k) => typeof k === "string" && k.startsWith("cuadros/") && storage.keyValida(k)).slice(0, 3);
       return { actorId: actor?.id || null, actorNombre: actor?.nombre || null, personaje, edad: limpiar(c.edad, 20),
-        rol: ROLES.includes(c.rol) ? c.rol : "otro", vestuario: limpiar(c.vestuario, 200), descripcion: limpiar(c.descripcion, 300), hablante: limpiar(c.hablante, 4) || null,
+        rol: ROLES.includes(c.rol) ? c.rol : "", // vacío: Gancho lo deduce de la historia vestuario: limpiar(c.vestuario, 200), descripcion: limpiar(c.descripcion, 300), hablante: limpiar(c.hablante, 4) || null,
         fotos, tieneFotos: Boolean(actor?.fotos?.length || fotos.length), reconocido: Boolean(c.reconocido && actor),
         // Huella de la cara (128 números) del flujo automático: se conserva para medir el parecido.
         huella: Array.isArray(c.huella) && c.huella.length === 128 && c.huella.every((x) => typeof x === "number" && Number.isFinite(x)) ? c.huella : null };
@@ -351,6 +351,30 @@ export function crearApp() {
       [p.canal, p.episodio_id, req.usuario, p.data.titulo, objetivo, JSON.stringify(razones), comentario]);
     await repo.tocarEpisodio(p.episodio_id);
     await enviar("rehacer", { propuestaId: p.id, objetivo, razones, comentario, usuario: req.usuario, prioridad: PRIORIDAD.interactiva });
+    res.status(202).json({ ok: true });
+  }));
+  // Ajustar: la portada gustó pero se le quieren cambios puntuales. Se edita la misma imagen (la anterior queda en "Anteriores").
+  app.post("/api/propuestas/:id/ajustar", envolver(async (req, res) => {
+    const cambios = limpiar(req.body?.cambios, 500);
+    if (!cambios) throw publico("Escribe qué le quieres cambiar.");
+    const p = await propuestaConEpisodio(req.params.id);
+    if (p.imagen?.estado !== "lista" || !p.imagen?.key) throw publico("Espera a que la portada esté lista.", 409);
+    if (p.eligiendo || p.rehaciendo || p.evaluando) throw publico("Espera a que termine lo que se está haciendo.", 409);
+    await reservarCupo(req.usuario, 1);
+    const ok = await tx(async (c) => {
+      const { rowCount } = await c.query(`UPDATE propuestas SET imagen = jsonb_build_object('estado','en_cola','intentos',0,'usuario',$3::text,'ajuste',$4::jsonb),
+          evaluacion = NULL, version = version + 1 WHERE id = $1 AND imagen->>'estado' = 'lista' AND imagen->>'key' = $2`,
+        [p.id, p.imagen.key, req.usuario, { base: p.imagen.key, cambios }]);
+      if (!rowCount) return false;
+      await c.query("INSERT INTO versiones (propuesta_id, data, imagen, evaluacion, feedback) VALUES ($1,$2,$3,$4,$5)",
+        [p.id, p.data, p.imagen, p.evaluacion, { objetivo: "ajuste", razones: [], comentario: cambios }]);
+      await c.query("INSERT INTO feedback (canal, episodio_id, usuario, titulo, objetivo, razones, comentario) VALUES ($1,$2,$3,$4,'ajuste','[]',$5)",
+        [p.canal, p.episodio_id, req.usuario, p.data.titulo, cambios]);
+      return true;
+    });
+    if (!ok) { await devolverCupo(req.usuario, 1); throw publico("La portada cambió mientras tanto. Intenta de nuevo.", 409); }
+    await repo.tocarEpisodio(p.episodio_id);
+    await enviar("imagen", { propuestaId: p.id, usuario: req.usuario, prioridad: PRIORIDAD.interactiva }, { prioridad: PRIORIDAD.interactiva });
     res.status(202).json({ ok: true });
   }));
   app.get("/api/propuestas/:id/versiones", envolver(async (req, res) => {
