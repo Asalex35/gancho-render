@@ -17,6 +17,7 @@ import * as ia from "./ai/claude.js";
 import * as imagen from "./ai/imagen.js";
 import { tipoImagen, miniatura, paraClaude, aclarar, miniaturaFormato, reducirPortada } from "./imagenes.js";
 import { FORMATOS } from "./formatos.js";
+import { motivoAmigable } from "./ai/motivos.js";
 import * as video from "./video.js";
 import { transcribir, transcripcionDisponible, guionConHablantes } from "./transcribir.js";
 import * as caras from "./caras.js";
@@ -278,7 +279,7 @@ async function fallaImagen({ propuestaId }, e) {
   // Si falló un repintado automático, se conserva la portada anterior: sigue siendo válida.
   const conservada = await one(`UPDATE propuestas SET imagen = (imagen - 'autoReintento') || jsonb_build_object('estado','lista','error',null,'taskId',null,'repintadoFallido',$2::text)
       WHERE id = $1 AND imagen->>'estado' <> 'lista' AND imagen ? 'autoReintento' AND imagen ? 'key' AND NOT archivada RETURNING imagen->>'key' AS key`,
-    [propuestaId, msg(e, "No se pudo repintar.")]);
+    [propuestaId, motivoAmigable(e?.message, "No se pudo repintar; se conservó la portada anterior.")]);
   if (conservada) {
     // Quita la copia que se guardó en versiones antes de repintar (es la misma imagen).
     await q(`DELETE FROM versiones WHERE id = (SELECT id FROM versiones WHERE propuesta_id = $1 AND imagen->>'key' = $2 ORDER BY creado DESC LIMIT 1)`, [propuestaId, conservada.key]);
@@ -287,7 +288,8 @@ async function fallaImagen({ propuestaId }, e) {
     return;
   }
   await q(`UPDATE propuestas SET imagen = imagen || $2::jsonb WHERE id = $1 AND imagen->>'estado' <> 'lista'`,
-    [propuestaId, { estado: "error", error: msg(e, "No se pudo crear la imagen.") }]);
+    // Motivo claro para el equipo (p. ej. "la IA no quiso hacerla porque…") y el texto original para el administrador.
+    [propuestaId, { estado: "error", error: motivoAmigable(e?.message), detalle: String(e?.message || "").slice(0, 300) }]);
   const p = await repo.propuesta(propuestaId);
   if (p) { await repo.tocarEpisodio(p.episodio_id); await quizaAutoElegir(p.episodio_id); }
 }
@@ -370,7 +372,8 @@ async function terminarFormato(formatoId, episodioId, r, usuario) {
   }
 }
 async function fallaFormato({ formatoId, usuario }, e) {
-  const f = await one(`UPDATE formatos SET estado = 'error', error = $2, actualizado = now() WHERE id = $1 RETURNING imagen`, [formatoId, msg(e, "No se pudo crear esta versión.")]);
+  const f = await one(`UPDATE formatos SET estado = 'error', error = $2, imagen = imagen || jsonb_build_object('detalle', $3::text), actualizado = now() WHERE id = $1 RETURNING imagen`,
+    [formatoId, e?.publico && /Primero|ya no existe|Espera/.test(e.message) ? e.message : motivoAmigable(e?.message), String(e?.message || "").slice(0, 300)]);
   if (f && !f.imagen?.taskId) await repo.devolverCupo(usuario, 1); // nunca se pidió la imagen
 }
 

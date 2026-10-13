@@ -572,7 +572,7 @@ function tarjeta(p, x, i, recargar) {
   } else if (img.estado === "lista") {
     lienzo = h("div", { class: "lienzo" }, h("img", { src: media(img.key), alt: x.concepto, onclick: () => verGrande(media(img.key)) }));
   } else if (img.estado === "error") {
-    lienzo = h("div", { class: "lienzo" }, h("div", { class: "estado" }, h("b", { style: { color: "var(--bad)" } }, img.error || "La imagen falló."),
+    lienzo = h("div", { class: "lienzo" }, h("div", { class: "estado" }, h("b", { style: { color: "var(--bad)" }, title: me.rol === "admin" && img.detalle ? `Detalle técnico: ${img.detalle}` : "" }, img.error || "La imagen falló."),
       h("button", { class: "btn small", type: "button", onclick: async (e) => { const b = e.currentTarget; b.disabled = true; try { await api(`/api/propuestas/${x.id}/reintentar`, { method: "POST" }); recargar(); } catch (er) { toast(er.message, true); b.disabled = false; } } }, "Reintentar imagen")));
   } else {
     const s = img.inicio ? Math.round((Date.now() - img.inicio) / 1000) : 0;
@@ -626,6 +626,7 @@ function tarjeta(p, x, i, recargar) {
             .map(([k, v]) => h("div", { class: "bar" }, h("span", {}, k), h("i", { style: { "--v": v } }), h("span", {}, v)))))),
       h("div", {}, h("div", { class: "eyebrow", style: { marginBottom: "6px" } }, "Por qué va a funcionar"), h("ul", { class: "why" }, razones.slice(0, 3).map((r) => h("li", {}, r)))),
       x.errorRehacer ? h("div", { class: "probs" }, x.errorRehacer) : null,
+      img.repintadoFallido ? h("div", { class: "risk" }, h("b", {}, "No se pudo mejorar sola: "), img.repintadoFallido) : null,
       img.estado === "lista" ? h("div", { class: "row", style: { gap: "8px" } },
         h("button", { class: "btn ghost", type: "button", style: { flex: 1 }, onclick: () => vistaYouTube(p, x).catch((e) => toast(e.message, true)) }, "▶ Ver en YouTube"),
         h("button", { class: "btn ghost", type: "button", style: { flex: 1 }, title: "JPG 1280×720 listo para subir a YouTube", onclick: () => descargar(`/api/episodios/${p.id}/portada.jpg?propuesta=${x.id}`) }, "⬇ Descargar")) : null,
@@ -756,7 +757,7 @@ function tarjetaFormato(f, recargar) {
     h("div", { class: `fmt-img${ocupado ? " shimmer" : ""}`, style: { aspectRatio: `${aw} / ${ah}` } },
       f.estado === "lista" ? h("img", { src: mediaFormato(f), alt: f.nombre, loading: "lazy", onclick: () => verGrande(media(f.key)) })
         : ocupado ? h("div", { class: "estado" }, h("div", { class: "spin" }), "Pintando…", h("small", {}, " tarda 1 a 3 min"))
-        : h("div", { class: "estado" }, h("b", { style: { color: "var(--bad)" } }, f.error || "Falló"))),
+        : h("div", { class: "estado" }, h("b", { style: { color: "var(--bad)", fontSize: ".82rem" }, title: me.rol === "admin" && f.detalle ? `Detalle técnico: ${f.detalle}` : "" }, f.error || "Falló"))),
     h("div", { class: "stack", style: { gap: "4px" } },
       h("b", { style: { fontSize: ".85rem" } }, f.nombre),
       f.textos?.principal ? h("span", { class: "muted", style: { fontSize: ".8rem" } }, `“${f.textos.principal}”`) : null,

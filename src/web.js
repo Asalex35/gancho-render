@@ -652,7 +652,7 @@ export function crearApp() {
   // ---------- Administración ----------
   // ---------- Formatos: TikTok, Instagram, Facebook y Prisma Plus ----------
   const verFormato = (f) => ({ id: f.id, tipo: f.tipo, nombre: FORMATOS[f.tipo]?.nombre || f.tipo, grupo: FORMATOS[f.tipo]?.grupo, aspecto: FORMATOS[f.tipo]?.aspecto,
-    estado: f.estado, error: f.error, key: f.imagen?.key || null, mini: f.imagen?.mini || null, textos: f.textos, creado: f.creado,
+    estado: f.estado, error: f.error, detalle: f.imagen?.detalle || null, key: f.imagen?.key || null, mini: f.imagen?.mini || null, textos: f.textos, creado: f.creado,
     titulo: f.titulo, episodio_id: f.episodio_id, propuesta_id: f.propuesta_id });
   app.get("/api/formatos/tipos", (req, res) => res.json(Object.entries(FORMATOS).map(([tipo, f]) => ({ tipo, nombre: f.nombre, grupo: f.grupo, aspecto: f.aspecto, ancho: f.ancho, alto: f.alto }))));
   app.get("/api/propuestas/:id/formatos", envolver(async (req, res) => {

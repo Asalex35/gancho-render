@@ -120,7 +120,7 @@ async function llamar({ content, schema, effort = "medium", maxTokens = 16000, c
     if (e instanceof Anthropic.AuthenticationError) throw new ErrorIA("La API key de Claude no es válida.");
     throw e;
   }
-  if (res.stop_reason === "refusal") throw new ErrorIA("Claude no quiso generar esto. Revisa que el brief no tenga contenido con menores o violencia explícita.");
+  if (res.stop_reason === "refusal") throw new ErrorIA("La IA no quiso escribir esto: la historia tiene algo que considera sensible (menores en una situación romántica o sexual, violencia muy explícita o una persona real). Suaviza la sinopsis o las notas y vuelve a intentar.");
   if (res.stop_reason === "max_tokens") throw new ErrorIA("La respuesta de Claude salió demasiado larga. Acorta la sinopsis o el guion.");
   const text = res.content.filter((b) => b.type === "text").map((b) => b.text).join("");
   return fmt.parse(text);

@@ -1,5 +1,11 @@
 # Cambios de Gancho
 
+## 0.6.1 — 2026-10-13
+- **Cuando algo no se genera, dice por qué** y qué hacer: la IA no quiso (escena sensible), se acabaron los créditos, tardó demasiado, servicio saturado, llave inválida o foto que no se pudo descargar. El administrador ve el detalle técnico al pasar el mouse.
+- Si la IA no quiere escribir las propuestas, explica qué suavizar en la historia.
+- Si la mejora automática de una portada falla, se avisa y se conserva la anterior.
+- Vigilante: libera trabajos que quedaron "activos" tras un reinicio (nada se queda atorado); botón "Cancelar (se atoró)" en versiones de más de 20 min; diagnóstico de cola para el administrador.
+
 ## 0.6.0 — 2026-10-13
 - **✎ Ajustar**: si una portada gustó pero le quieres cambios ("la mamá más grande", "quita el globo"), Gancho edita esa misma imagen y solo cambia lo pedido, con las caras de los actores como referencia. Botones rápidos ("Caras más grandes", "Más brillante"…). La anterior queda en "Anteriores". 18 créditos.
 - "Rehacer" ahora explica que es para hacer otra idea desde cero.
