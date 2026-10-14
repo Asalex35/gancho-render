@@ -1,5 +1,11 @@
 # Cambios de Gancho
 
+## 0.9.0 — 2026-10-14
+- **Solo salen los personajes que pides**: la portada lleva únicamente a los actores con foto (y a un personaje sin foto solo si las notas lo piden por nombre). Sin extras, gente al fondo ni siluetas. Si el detector encuentra caras de más, la portada se repinta sola quitándolas.
+- **Google oficial primero**: imágenes con la API oficial de Gemini (Nano Banana Pro); si falla, nanobananaapi.ai y luego fal.ai. Costo mostrado en US$ cuando el principal es Google.
+- **Almacenamiento que no se satura**: limpieza diaria automática (videos 3 días, textos 7, cuadros sin usar 14, propuestas reemplazadas y anteriores viejas 30, no elegidas quedan en miniatura a los 60). Las versiones de redes se guardan en JPG (≈5 veces más ligeras). Aviso si el disco pasa del 85 %. Panel «Almacenamiento» en Administración.
+- **Videos de hasta 30 GB** (`MAX_VIDEO_GB`).
+
 ## 0.8.0 — 2026-10-14
 - **Perfiles de actores automáticos**: el lector de video busca caras en todo el episodio (no solo 5 min), crea el perfil de los actores que no conoce y lo mejora en cada video (agrega caras mejores, reemplaza casi-duplicadas, ignora otras personas y borra las que sobran, con variedad de ángulos; las fotos oficiales nunca se borran).
 - **Hacks: todos los episodios**: detecta Episodio 1, 2, 3… con pantallas negras + silencio (o con el número indicado); portada, título y descripción solo del 1. Lista visible en el episodio y botón para corregir el corte y volver a leer. Casilla "Es un hack" en Manual.

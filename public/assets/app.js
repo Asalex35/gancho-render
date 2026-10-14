@@ -39,6 +39,8 @@ async function copiar(texto) {
   catch { toast("No se pudo copiar. Selecciona el texto y usa Cmd+C.", true); }
 }
 const media = (key) => `/media/${key}`;
+// Costo de n imágenes como lo cobra el proveedor principal: dólares con Google oficial, créditos con nanobananaapi.ai.
+const costoTexto = (n) => (me?.proveedorPrincipal === "nanobanana" ? `${n * (me.creditosPorImagen || 18)} créditos` : `≈ US$${(n * (me?.usdPorImagen || 0.134)).toFixed(2)}`);
 const local = {
   get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
@@ -211,7 +213,8 @@ async function vistaLoteNuevo() {
     const validas = r.filas.filter((f) => !f.errores.length);
     const imagenes = validas.length * 3;
     const creditos = imagenes * me.creditosPorImagen;
-    const alcanza = me.creditos == null || me.creditos >= creditos;
+    // Con Google oficial se paga por uso (sin saldo previo); con nanobananaapi.ai se revisa que alcancen los créditos.
+    const alcanza = me.proveedorPrincipal !== "nanobanana" || me.creditos == null || me.creditos >= creditos;
     const quedanHoy = me.limites.userDailyImages - me.uso.imagenes;
     const lanzar = h("button", { class: "btn primary big", type: "button", disabled: !validas.length || Boolean(r.aviso) || !alcanza, onclick: async (e) => {
       const b = e.currentTarget; b.disabled = true;
@@ -224,8 +227,8 @@ async function vistaLoteNuevo() {
       h("div", { class: "kpis" },
         h("div", { class: "kpi" }, h("span", { class: "muted" }, "Episodios válidos"), h("b", {}, `${validas.length} / ${r.filas.length}`)),
         h("div", { class: "kpi" }, h("span", { class: "muted" }, "Portadas a generar"), h("b", {}, imagenes)),
-        h("div", { class: `kpi${alcanza ? "" : " alerta"}` }, h("span", { class: "muted" }, "Créditos estimados"), h("b", {}, `≈ ${creditos}`),
-          h("span", { class: "muted", style: { fontSize: ".78rem" } }, alcanza ? `Tienes ${me.creditos ?? "?"}` : `Solo tienes ${me.creditos}. Recarga antes.`)),
+        h("div", { class: `kpi${alcanza ? "" : " alerta"}` }, h("span", { class: "muted" }, "Costo estimado"), h("b", {}, costoTexto(imagenes)),
+          h("span", { class: "muted", style: { fontSize: ".78rem" } }, me.proveedorPrincipal !== "nanobanana" ? "Pago por uso (Google)" : alcanza ? `Tienes ${me.creditos ?? "?"} créditos` : `Solo tienes ${me.creditos}. Recarga antes.`)),
         h("div", { class: `kpi${quedanHoy < imagenes ? " alerta" : ""}` }, h("span", { class: "muted" }, "Te quedan hoy"), h("b", {}, quedanHoy), h("span", { class: "muted", style: { fontSize: ".78rem" } }, "portadas"))),
       r.aviso ? h("div", { class: "aviso" }, r.aviso) : "",
       r.desconocidas?.length ? h("div", { class: "aviso" }, `Ignoré estas columnas: ${r.desconocidas.join(", ")}`) : "",
@@ -389,7 +392,7 @@ async function vistaEditor(id) {
     const imgs = (destinos.has("youtube") ? 3 : 0) + [...destinos].filter((d) => d !== "youtube").length;
     const nombres = [...destinos].map((d) => (d === "youtube" ? "YouTube" : (tiposFormato.find((t) => t.tipo === d)?.nombre || d).split(" · ")[0]));
     btnGenerar.disabled = !destinos.size;
-    btnGenerar.textContent = !destinos.size ? "Elige para dónde es" : `Crear ${nombres.length === 1 ? nombres[0] : `${nombres.length} portadas`} · ${imgs * (me.creditosPorImagen || 18)} créditos`;
+    btnGenerar.textContent = !destinos.size ? "Elige para dónde es" : `Crear ${nombres.length === 1 ? nombres[0] : `${nombres.length} portadas`} · ${costoTexto(imgs)}`;
   };
   const opcionDestino = (d, nombre, nota) => h("label", { class: "fmt-op" },
     h("input", { type: "checkbox", checked: destinos.has(d), onchange: (e) => { e.target.checked ? destinos.add(d) : destinos.delete(d); local.set("gancho-destinos", [...destinos]); costoDestinos(); } }),
@@ -543,7 +546,7 @@ function pintarEpisodio(p) {
       p.brief?.sinopsis ? h("button", { class: "btn", type: "button", disabled: pensando || p.estado === "procesando", onclick: () => vistaFormatos(p).catch((e) => toast(e.message, true)) }, "✦ Redes y Prisma Plus") : null,
       p.propuestas.length ? h("button", { class: "btn", type: "button", disabled: pensando || p.propuestas.some(OCUPADA) || p.eligiendo,
         title: p.propuestas.some(OCUPADA) ? "Espera a que terminen las portadas actuales" : "",
-        onclick: () => confirmar("¿Hacer 3 propuestas nuevas?", `Las actuales se guardan en el historial y se borra la descripción. Cuesta ≈${3 * (me.creditosPorImagen || 18)} créditos.`, generar, "Sí, hacer 3 nuevas") }, "3 propuestas nuevas") : null,
+        onclick: () => confirmar("¿Hacer 3 propuestas nuevas?", `Las actuales se guardan en el historial y se borra la descripción. Cuesta ${costoTexto(3)}.`, generar, "Sí, hacer 3 nuevas") }, "3 propuestas nuevas") : null,
       h("button", { class: "btn ghost danger", type: "button", onclick: () => confirmar("¿Borrar este episodio?", "Se borran las portadas y versiones. No se puede deshacer.",
         async () => { await api(`/api/episodios/${p.id}`, { method: "DELETE" }); location.hash = p.lote_id ? `#/lote/${p.lote_id}` : "#/"; }, "Sí, borrar") }, "Borrar")))];
 
@@ -590,7 +593,7 @@ function pintarEpisodio(p) {
           `Episodio ${e.n}: ${mmss(e.desde)}–${mmss(e.hasta)}${e.n === 1 ? " · portada y textos" : ""}`))),
       h("div", { class: "row", style: { gap: "8px" } }, h("span", { class: "muted", style: { fontSize: ".85rem" } }, "¿El episodio 1 termina en otro minuto?"), caja,
         h("button", { class: "btn small", type: "button", onclick: () => confirmar("¿Volver a leer el video con ese corte?",
-          `Gancho lee de nuevo solo el episodio 1 y hace 3 propuestas nuevas (≈${3 * (me.creditosPorImagen || 18)} créditos).`,
+          `Gancho lee de nuevo solo el episodio 1 y hace 3 propuestas nuevas (${costoTexto(3)}).`,
           async () => { await api(`/api/auto/${p.id}/corte`, { method: "POST", body: { finPrimero: caja.value } }); recargar(); }, "Sí, volver a leer") }, "Corregir y volver a leer"))));
   }
   if ((p.formatos || []).length) partes.push(h("section", { class: "stack", style: { marginBottom: "26px" } },
@@ -842,7 +845,7 @@ async function vistaFormatos(p, x = null) {
   const crear = h("button", { class: "btn primary", type: "button" });
   const costo = () => {
     crear.disabled = !elegidos.size;
-    crear.textContent = elegidos.size ? `Crear ${elegidos.size} ${elegidos.size > 1 ? "imágenes" : "imagen"} · ${elegidos.size * (me.creditosPorImagen || 18)} créditos` : "Elige al menos una";
+    crear.textContent = elegidos.size ? `Crear ${elegidos.size} ${elegidos.size > 1 ? "imágenes" : "imagen"} · ${costoTexto(elegidos.size)}` : "Elige al menos una";
   };
   costo();
   const grupo = (g, titulo, nota) => h("div", { class: "stack", style: { gap: "6px" } }, h("div", { class: "eyebrow" }, titulo),
@@ -894,7 +897,7 @@ function ajustar(x, recargar) {
     ir.disabled = true;
     try { await api(`/api/propuestas/${x.id}/ajustar`, { method: "POST", body: { cambios: caja.value } }); cerrarModal(); toast("Aplicando tus cambios… tarda 1 a 2 min"); recargar(); }
     catch (e) { toast(e.message, true); ir.disabled = false; }
-  } }, `Ajustar portada · ${me.creditosPorImagen || 18} créditos`);
+  } }, `Ajustar portada · ${costoTexto(1)}`);
   abrirModal(h("h2", {}, "¿Qué le cambio?"),
     h("p", { class: "muted", style: { margin: 0 } }, "Gancho edita esta misma imagen: deja igual lo que te gustó y cambia solo lo que pidas. La anterior queda en «Anteriores»."),
     h("img", { src: media(x.imagen.mini || x.imagen.key), alt: "", style: { width: "100%", maxWidth: "420px", borderRadius: "10px" } }),
@@ -1039,6 +1042,19 @@ async function vistaAdmin() {
   const hoy = uso.dias.filter((d) => d.dia === new Date().toISOString().slice(0, 10)).reduce((s, d) => s + d.imagenes, 0);
   const porEstado = Object.fromEntries(uso.estados.map((e) => [e.estado, e.n]));
   const portadasQueAlcanzan = uso.creditos != null ? Math.floor(uso.creditos / uso.creditosPorImagen) : null;
+  // Almacenamiento: cuánto ocupa cada cosa (se carga aparte porque en la nube tarda unos segundos).
+  const almacenamiento = h("section", { class: "panel stack", style: { marginBottom: "28px", gap: "10px" } }, h("div", { class: "eyebrow" }, "Almacenamiento"), h("div", { class: "spin" }));
+  const gb = (b) => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1)} GB` : `${Math.round(b / 1024 ** 2)} MB`);
+  const NOMBRES = { videos: "Videos originales", portadas: "Portadas", formatos: "Redes y Prisma Plus", mini: "Miniaturas", cuadros: "Cuadros de video", rostros: "Caras de actores", actores: "Fotos de actores", logos: "Logos" };
+  api("/api/admin/almacenamiento").then((a) => {
+    const total = Object.values(a.carpetas).reduce((s, c) => s + c.bytes, 0);
+    const lleno = a.disco ? 1 - a.disco.libre / a.disco.total : null;
+    almacenamiento.replaceChildren(h("div", { class: "eyebrow" }, "Almacenamiento"),
+      h("div", { class: "row", style: { gap: "10px" } }, h("b", {}, `Gancho usa ${gb(total)}`),
+        a.disco ? h("span", { class: `tag${lleno > 0.85 ? " bad" : lleno > 0.7 ? " warn" : " ok"}` }, `Disco al ${Math.round(lleno * 100)} % · libres ${gb(a.disco.libre)}`) : h("span", { class: "tag" }, "En la nube")),
+      h("div", { class: "row", style: { gap: "6px" } }, Object.entries(a.carpetas).filter(([, c]) => c.archivos).map(([k, c]) => h("span", { class: "tag" }, `${NOMBRES[k] || k}: ${gb(c.bytes)}`))),
+      h("span", { class: "muted", style: { fontSize: ".8rem" } }, "Se borran solos: videos (3 días), textos (7), cuadros sin usar (14), propuestas reemplazadas y anteriores viejas (30); las no elegidas quedan en miniatura (60). Lo elegido y las versiones de redes nunca se borran."));
+  }).catch(() => almacenamiento.remove());
 
   const nuevoUsuario = () => {
     const u = h("input", { type: "text", placeholder: "usuario", id: "nu-usuario" });
@@ -1067,6 +1083,7 @@ async function vistaAdmin() {
       h("div", { class: "kpi" }, h("span", { class: "muted" }, "Portadas hoy (equipo)"), h("b", {}, hoy), h("span", { class: "muted", style: { fontSize: ".78rem" } }, `Límite ${me.limites.orgDailyImages}`)),
       h("div", { class: "kpi" }, h("span", { class: "muted" }, "Pintándose ahora"), h("b", {}, (porEstado.generando || 0) + (porEstado.en_cola || 0))),
       h("div", { class: "kpi" }, h("span", { class: "muted" }, "Fallidas (48 h)"), h("b", {}, porEstado.error || 0))),
+    almacenamiento,
     h("section", { class: "stack", style: { marginBottom: "28px" } },
       h("div", { class: "row", style: { justifyContent: "space-between" } }, h("h2", {}, "Usuarios"), h("button", { class: "btn", type: "button", onclick: nuevoUsuario }, "+ Usuario")),
       h("div", { class: "tw" }, h("table", {}, h("thead", {}, h("tr", {}, ["Usuario", "Rol", "Estado", ""].map((t) => h("th", {}, t)))),
@@ -1216,7 +1233,7 @@ async function vistaAuto() {
   const zona = h("div", { class: "subir", tabindex: "0", role: "button", onclick: () => input.click(),
     onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } } },
     h("b", {}, "Suelta aquí el video final del episodio"),
-    h("span", { class: "muted" }, "Puedes soltar varios. MP4, MOV, WEBM o MKV · videos largos y hacks incluidos (hasta 20 GB)"), progreso);
+    h("span", { class: "muted" }, `Puedes soltar varios. MP4, MOV, WEBM o MKV · videos largos y hacks incluidos (hasta ${me.maxVideoGb || 30} GB)`), progreso);
   zona.addEventListener("dragover", (e) => { e.preventDefault(); zona.classList.add("on"); });
   zona.addEventListener("dragleave", () => zona.classList.remove("on"));
   zona.addEventListener("drop", (e) => { e.preventDefault(); zona.classList.remove("on"); subir([...e.dataTransfer.files]); });

@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, HeadBucketCommand,
+import { S3Client, ListObjectsV2Command, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, HeadBucketCommand,
   CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { config } from "./config.js";
@@ -113,4 +113,31 @@ export async function completarMultiparte(key, uploadId, partes) {
 }
 export async function cancelarMultiparte(key, uploadId) {
   await s3.send(new AbortMultipartUploadCommand({ Bucket: S.bucket, Key: key, UploadId: uploadId })).catch(() => {});
+}
+
+// Tamaño por carpeta (panel de Administración). En S3 se cuentan hasta ~50,000 archivos por carpeta.
+export const CARPETAS = ["videos", "portadas", "formatos", "mini", "cuadros", "rostros", "actores", "logos"];
+export async function tamanos() {
+  const out = {};
+  for (const c of CARPETAS) {
+    let bytes = 0, archivos = 0;
+    if (s3) {
+      let token;
+      for (let i = 0; i < 50; i++) {
+        const r = await s3.send(new ListObjectsV2Command({ Bucket: S.bucket, Prefix: `${c}/`, ContinuationToken: token }));
+        for (const o of r.Contents || []) { bytes += o.Size || 0; archivos++; }
+        if (!r.IsTruncated) break;
+        token = r.NextContinuationToken;
+      }
+    } else {
+      for (const f of await fs.readdir(path.resolve(S.localDir, c)).catch(() => [])) {
+        const st = await fs.stat(path.resolve(S.localDir, c, f)).catch(() => null);
+        if (st?.isFile()) { bytes += st.size; archivos++; }
+      }
+    }
+    out[c] = { bytes, archivos };
+  }
+  let disco = null;
+  if (!s3) { const d = await fs.statfs(S.localDir).catch(() => null); if (d) disco = { total: d.blocks * d.bsize, libre: d.bavail * d.bsize }; }
+  return { carpetas: out, disco };
 }

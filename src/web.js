@@ -35,7 +35,7 @@ const ROLES = ["transgresor", "victima", "testigo", "villano", "otro"];
 
 const IDIOMAS = { es: "Español", en: "Inglés", pt: "Portugués" };
 // Tamaño máximo de un video (configurable). Sin S3 se sube en partes, así pasa por Cloudflare (corta peticiones de más de 100 MB).
-const LIMITE_VIDEO = Number(process.env.MAX_VIDEO_GB || 20) * 1024 ** 3;
+const LIMITE_VIDEO = Number(process.env.MAX_VIDEO_GB || 30) * 1024 ** 3;
 const PARTE_MAX = 64 * 1024 ** 2;
 
 // Origen de R2/S3 para que el navegador pueda subir videos directo al bucket.
@@ -134,7 +134,7 @@ export function crearApp() {
     let creditos = null;
     try { creditos = await nb.creditos(); } catch {}
     res.json({
-      usuario: req.usuario, rol: req.user.rol, creditos, erp: { activo: erp.activo, solo: erp.solo }, usdPorImagen: USD_POR_IMAGEN, uso: await repo.usoHoy(req.usuario),
+      usuario: req.usuario, rol: req.user.rol, creditos, erp: { activo: erp.activo, solo: erp.solo }, usdPorImagen: USD_POR_IMAGEN, proveedorPrincipal: ordenProveedores()[0] || null, maxVideoGb: Math.round(LIMITE_VIDEO / 1024 ** 3), uso: await repo.usoHoy(req.usuario),
       limites: config.limits, creditosPorImagen: config.creditsPerImage, refsPublicas: config.refsPublicas,
       canales: (await repo.canales()).filter((c) => c.activo).map((c) => ({ id: c.id, nombre: c.nombre, logo: c.logo_key, idioma: c.idioma, modelo: c.modelo })),
       idiomas: IDIOMAS, transcripcion: transcripcionDisponible(), subidaDirecta: storage.esS3,
@@ -899,6 +899,9 @@ export function crearApp() {
     const trabajos = await all(`SELECT state, retry_count, created_on, started_on, completed_on, left(coalesce(output::text, ''), 300) AS salida
       FROM pgboss.job WHERE name = 'formato' AND data->>'formatoId' = $1 ORDER BY created_on DESC LIMIT 10`, [id]).catch((e) => [{ error: e.message }]);
     res.json({ formato: f && { ...f, imagen: { ...f.imagen, taskId: f.imagen?.taskId ? "sí" : "no" } }, trabajos });
+  }));
+  app.get("/api/admin/almacenamiento", soloAdmin, envolver(async (req, res) => {
+    res.json(await storage.tamanos());
   }));
   app.get("/api/admin/bitacora", soloAdmin, envolver(async (req, res) => {
     res.json(await all("SELECT usuario, accion, detalle, cuando FROM bitacora ORDER BY cuando DESC LIMIT 300"));

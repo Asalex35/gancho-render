@@ -10,6 +10,7 @@
 import crypto from "node:crypto";
 import { one, q } from "./db.js";
 import { hashClave } from "./auth.js";
+import { usdPorImagen } from "./ai/imagen.js";
 
 const env = process.env;
 export const erp = {
@@ -21,7 +22,7 @@ export const erp = {
   limiteUsd: env.ERP_LIMITE_USD ? Number(env.ERP_LIMITE_USD) : null,
 };
 // Costo aproximado en dólares (para avisar y para la regla de aprobación).
-export const USD_POR_IMAGEN = Number(env.USD_POR_IMAGEN || 0.09);
+export const USD_POR_IMAGEN = usdPorImagen("pro");
 export const USD_POR_EPISODIO_TEXTO = 0.3;
 
 const firmar = (datos) => crypto.createHmac("sha256", env.ERP_SSO_SECRET).update(datos).digest("base64url");

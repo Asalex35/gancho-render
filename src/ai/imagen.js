@@ -1,5 +1,6 @@
 // Generación de imagen con respaldo: intenta los proveedores en orden y salta al siguiente si uno falla.
-// Orden por defecto: nanobanana (nanobananaapi.ai) → google (Gemini directo) → fal (Seedream 4).
+// Orden por defecto: google (API oficial de Gemini) → nanobanana (nanobananaapi.ai) → fal (Seedream 4): tres empresas distintas,
+// así una caída de cualquiera no detiene las portadas.
 // Un "cortacircuitos" evita insistir con un proveedor caído: tras 3 fallas en 5 min se salta 5 min.
 import * as nb from "./nanobanana.js";
 import { generarGoogle, generarFal, googleDisponible, falDisponible } from "./respaldos.js";
@@ -12,7 +13,7 @@ export const PROVEEDORES = {
 };
 
 export function orden() {
-  const pedido = (process.env.IMAGE_PROVIDERS || "nanobanana,google,fal").split(",").map((s) => s.trim()).filter((p) => PROVEEDORES[p]);
+  const pedido = (process.env.IMAGE_PROVIDERS || "google,nanobanana,fal").split(",").map((s) => s.trim()).filter((p) => PROVEEDORES[p]);
   return pedido.filter((p) => PROVEEDORES[p].disponible());
 }
 
@@ -59,3 +60,8 @@ export async function generar({ prompt, refs, modelo, evitar = [], alCambiar, as
 }
 
 export { registrarFalla };
+
+// Costo aproximado por imagen (US$) según el proveedor que va primero. Precios públicos oct 2026.
+const USD = { google: { pro: 0.134, nb2: 0.067 }, nanobanana: { pro: 0.09, nb2: 0.06 }, fal: { pro: 0.15, nb2: 0.08 } };
+export const principal = () => orden()[0] || "nanobanana";
+export const usdPorImagen = (modelo = "pro") => Number(process.env.USD_POR_IMAGEN) || USD[principal()]?.[modelo] || 0.134;

@@ -75,3 +75,8 @@ export async function formatoFinal(key, ancho, alto) {
 export async function miniaturaFormato(buf) {
   return sharp(buf, LIM).resize(420, 420, { fit: "inside" }).jpeg({ quality: 80 }).toBuffer();
 }
+
+// Versiones de redes y Prisma Plus: el proveedor entrega PNG de varios MB; se guarda un JPG de máx. 2400 px (≈5 veces más ligero).
+export async function reducirFormato(buf) {
+  return sharp(buf, LIM).resize(2400, 2400, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 90, mozjpeg: true }).toBuffer();
+}

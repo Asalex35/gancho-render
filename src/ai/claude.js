@@ -139,8 +139,9 @@ ESTILO VISUAL DE SUS PORTADAS: ${canal.estilo_visual || "sigue el playbook"}${ej
 
 function describirEpisodio(ep, canal) {
   const b = ep.brief;
+  const salen = quienesSalen(ep.cast, b.notas);
   const cast = (ep.cast || []).map((c) =>
-    `- ${c.personaje} (${c.edad || "edad no indicada"}), rol: ${c.rol}, vestuario: ${c.vestuario || "libre"}, actor: ${c.actorNombre || "sin asignar"}${c.tieneFotos ? " · CON FOTO (debe salir)" : ""}`).join("\n");
+    `- ${c.personaje} (${c.edad || "edad no indicada"}), rol: ${c.rol}, vestuario: ${c.vestuario || "libre"}, actor: ${c.actorNombre || "sin asignar"}${c.tieneFotos ? " · CON FOTO" : ""}${salen.includes(c) ? " · SALE EN PORTADA" : " · NO sale en la portada (no se pidió)"}`).join("\n");
   return `${describirCanal(canal)}
 
 SINOPSIS: ${b.sinopsis}${b.duracion_min ? `\nDURACIÓN DEL EPISODIO: ${b.duracion_min} min` : ""}
@@ -181,24 +182,34 @@ Cada título usa una fórmula distinta cuando sea posible. Califica con honestid
 En prompt_imagen describe: escena, posición de cada personaje (por nombre), emoción exacta de cada cara, vestuario, objeto clave,
 color saturado, luz, "no text, no letters, no watermark", espacio libre abajo a la izquierda para el logo. Formato 16:9.
 ENCUADRE OBLIGATORIO: plano medio cerrado, las caras principales ocupan al menos un tercio del alto de la imagen,
-máximo 4 personas protagonistas, extras desenfocados al fondo, nada importante en la esquina inferior derecha.
-ACTORES CON FOTO: todos los personajes marcados "CON FOTO" salen en CADA una de las 3 portadas (si son más de 4, los 4 más importantes),
-con la cara visible, y van en personajes_en_portada con su nombre EXACTO del cast. En "Víctima sola" la víctima va al frente y los demás más chicos atrás.
+nada importante en la esquina inferior derecha.
+SOLO SALEN LOS PEDIDOS: en la imagen aparecen únicamente los personajes marcados «SALE EN PORTADA», nadie más:
+sin extras, sin gente al fondo, sin multitudes, sin siluetas, sin personas en fotos o pantallas. Si la historia tiene a alguien más, cuéntalo con un objeto o la emoción, no mostrándolo.
+Los personajes marcados «SALE EN PORTADA» salen en CADA una de las 3 portadas con la cara visible, y van en personajes_en_portada con su nombre EXACTO del cast. En "Víctima sola" la víctima va al frente y los demás más chicos atrás.
 Escribe porque_funciona y riesgo cortos y directos: el equipo los lee rápido.
-PERSONAJES SIN ACTOR (sin foto): en prompt_imagen dales rasgos claramente distintos a los de los actores con foto (otro color y peinado de cabello, otra edad o complexión), para que la imagen no repita la cara del protagonista.
+Si sale un personaje SIN FOTO: en prompt_imagen dale rasgos claramente distintos a los de los actores con foto (otro color y peinado de cabello, otra edad o complexión), para que la imagen no repita la cara del protagonista.
 ANTES DE RESPONDER revisa cada título: si insinúa o menciona algo del DESENLACE (cómo termina, quién regresa, embarazos, castigos, éxitos futuros), reescríbelo.
 IDIOMA: títulos en ${nombreIdioma(canal.idioma)}${canal.idioma !== "es" ? " (y su traducción al español en traduccion)" : ""}; todo lo demás para el equipo en español.`;
   const r = await llamar({ content, schema: RespuestaPropuestas, effort: "high", creativo: true });
-  for (const pr of r.propuestas || []) asegurarActores(pr, ep.cast);
+  for (const pr of r.propuestas || []) asegurarActores(pr, ep.cast, ep.brief?.notas);
   return r;
 }
 
 // Nombres del cast tal cual; si Claude escribe "La novia" en vez de "Novia", se corrige al nombre exacto.
 const norm = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/^(el|la|los|las)\s+/, "").trim();
 export const mismoPersonaje = (a, b) => { const x = norm(a), y = norm(b); return Boolean(x && y) && (x === y || x.includes(y) || y.includes(x)); };
-export function asegurarActores(propuesta, cast) {
+// Quién sale en la portada: SOLO lo que pidió el equipo. Con actores con foto, salen ellos (y un personaje sin foto
+// solo si las notas lo piden por nombre); si nadie tiene foto, los del reparto (máx. 3). Nunca personas inventadas.
+export function quienesSalen(cast, notas = "") {
   const conFoto = (cast || []).filter((c) => c.tieneFotos).slice(0, 4);
-  const nombres = (propuesta.personajes_en_portada || []).map((n) => (cast || []).find((c) => mismoPersonaje(c.personaje, n))?.personaje || n);
+  const pedidos = (cast || []).filter((c) => !c.tieneFotos && notas && norm(notas).includes(norm(c.personaje)));
+  return conFoto.length ? [...conFoto, ...pedidos].slice(0, 4) : (cast || []).slice(0, 3);
+}
+export function asegurarActores(propuesta, cast, notas) {
+  const permitidos = quienesSalen(cast, notas);
+  const conFoto = permitidos.filter((c) => c.tieneFotos);
+  const nombres = (propuesta.personajes_en_portada || []).map((n) => (cast || []).find((c) => mismoPersonaje(c.personaje, n))?.personaje || n)
+    .filter((n) => !permitidos.length || permitidos.some((c) => mismoPersonaje(c.personaje, n)));
   const faltan = conFoto.filter((c) => !nombres.some((n) => mismoPersonaje(n, c.personaje)));
   propuesta.personajes_en_portada = [...new Set([...nombres, ...faltan.map((c) => c.personaje)])];
   if (faltan.length) propuesta.prompt_imagen += `\nALSO INCLUDE in the scene, face clearly visible (secondary position, smaller or behind): ${faltan.map((c) => c.personaje).join(", ")}.`;
@@ -224,12 +235,12 @@ GUÍA VISUAL (en inglés, síguela al pie de la letra): ${formato.guia}
 
 TEXTO EN LA IMAGEN: ${TEXTOS[formato.texto]}
 Todo texto en ${nombreIdioma(canal.idioma)}, con ortografía perfecta y acentos. Nunca reveles el desenlace.
-ACTORES CON FOTO: los personajes marcados "CON FOTO" salen en la imagen (máx. 4) y van en personajes_en_portada con su nombre exacto.
+Salen SOLO los personajes marcados «SALE EN PORTADA» (van en personajes_en_portada con su nombre exacto); nadie más: sin extras ni gente al fondo.
 En prompt_imagen: describe composición vertical u horizontal según la proporción, posición y emoción de cada personaje (por nombre),
 vestuario, luz y color, y si lleva texto escribe literalmente: the title text reads "<texto_principal>" (y la tagline si aplica), indicando tipografía y posición.
 Termina con: "photorealistic, no watermark, no extra text, no logos".`;
   const r = await llamar({ content, schema: DisenoFormato, effort: "medium", maxTokens: 6000, creativo: true });
-  return asegurarActores(r, ep.cast);
+  return asegurarActores(r, ep.cast, ep.brief?.notas);
 }
 
 export async function rehacerPropuesta(ep, canal, anterior, { objetivo, razones, comentario }, feedback) {
@@ -246,9 +257,10 @@ ${JSON.stringify({ titulo: anterior.titulo, concepto: anterior.concepto, composi
 POR QUÉ NO GUSTÓ: ${[...razones, comentario].filter(Boolean).join("; ") || "sin razón indicada"}
 
 TAREA: ${queCambiar} Corrige exactamente lo que el equipo señaló. Mantén el encuadre cerrado (caras grandes).
+Salen SOLO los personajes marcados «SALE EN PORTADA»; no agregues a nadie más (sin extras ni gente al fondo).
 Devuelve el gancho y UNA sola propuesta en "propuestas".`;
   const r = await llamar({ content, schema: RespuestaPropuestas, effort: "high", creativo: true });
-  return asegurarActores(r.propuestas[0], ep.cast);
+  return asegurarActores(r.propuestas[0], ep.cast, ep.brief?.notas);
 }
 
 export async function evaluarPortada({ imagen, propuesta, referencias }) {
@@ -266,6 +278,7 @@ Concepto pedido: ${propuesta.concepto}
 
 Evalúa la portada contra el playbook como la vería alguien en su celular a 168x94 px:
 ¿se entiende la historia?, ¿hay acción y reacción?, ¿las emociones se leen?, ¿hay objeto clave?, ¿hay color que salte?
+Personas que deben salir: ${(propuesta.personajes_en_portada || []).join(", ") || "las del concepto"}. Si aparece CUALQUIER otra persona (extras, gente al fondo, siluetas), es defecto grave.
 Revisa defectos: manos o caras deformes, texto o letras dentro de la imagen, caras que no se parecen a las referencias,
 cualquier cosa que viole las reglas de seguridad de marca. "aprobada" = false si hay un defecto grave.
 porque_funciona: 3 razones de máximo 12 palabras. problemas: máximo 2, de máximo 12 palabras cada uno, solo los que más importan (vacía si no hay).`,

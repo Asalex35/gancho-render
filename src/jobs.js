@@ -16,7 +16,7 @@ import * as storage from "./storage.js";
 import * as nb from "./ai/nanobanana.js";
 import * as ia from "./ai/claude.js";
 import * as imagen from "./ai/imagen.js";
-import { tipoImagen, miniatura, paraClaude, aclarar, miniaturaFormato, reducirPortada } from "./imagenes.js";
+import { tipoImagen, miniatura, paraClaude, aclarar, miniaturaFormato, reducirPortada, reducirFormato } from "./imagenes.js";
 import { FORMATOS } from "./formatos.js";
 import { motivoAmigable } from "./ai/motivos.js";
 import * as video from "./video.js";
@@ -175,7 +175,12 @@ function unaCara(refs, personajes) {
   const sinCara = personajes.filter((p) => !conCara.some((c) => ia.mismoPersonaje(c, p)));
   return `Each reference face is used for exactly one person: the character it belongs to (${conCara.join(", ")}). Nobody else in the image may share those faces.` +
     (sinCara.length ? ` ${sinCara.join(", ")} ${sinCara.length > 1 ? "are different people" : "is a different person"}: clearly different face, hair color and hairstyle, age and build.` : "") +
-    " Background extras must also look clearly different from the reference actors.";
+    "";
+}
+// Nunca personas de más: el modelo de imagen tiende a llenar el fondo con gente que nadie pidió.
+function soloEllos(personajes) {
+  if (!personajes?.length) return "";
+  return `\n\nPEOPLE IN THE IMAGE: exactly ${personajes.length} (${personajes.join(", ")}). Nobody else anywhere in the frame: no background extras, no crowd, no passers-by, no silhouettes, no partial bodies or hands of other people, no people in photos, screens, posters or reflections.`;
 }
 
 // Edición de una portada que ya gustó: conserva todo y cambia solo lo pedido.
@@ -190,6 +195,7 @@ function promptAjuste(cambios, refs, extra) {
 EDIT reference image 1. Keep EVERYTHING the same (people, faces, wardrobe, composition, framing, lighting, colors, 16:9 format)
 EXCEPT these changes requested by the team:
 ${cambios}
+Do not add any new person unless the requested changes explicitly ask for it.
 Every face must stay identical to the real actors in the references. Photorealistic, no text, no letters, no watermark.${extra ? `\n\nALSO FIX: ${extra}` : ""}`;
 }
 
@@ -210,7 +216,7 @@ Use the references ONLY for identity and wardrobe; build a new, more dramatic co
 ${unaCara(refs, personajes)}\n\n` : "";
   // Las portadas de la competencia son claras y saturadas: una portada oscura se pierde en la página de inicio.
   const luz = "LIGHTING: bright, high-key commercial lighting with vivid saturated colors; faces brightly and evenly lit. Even night or hospital scenes must read clearly at thumbnail size: no dark, gloomy or low-key images.";
-  return `${cabeza}${prompt}${conLuz ? `\n\n${luz}` : ""}${extra ? `\n\nFIX THESE PROBLEMS FROM THE PREVIOUS ATTEMPT: ${extra}` : ""}`;
+  return `${cabeza}${prompt}${soloEllos(personajes)}${conLuz ? `\n\n${luz}` : ""}${extra ? `\n\nFIX THESE PROBLEMS FROM THE PREVIOUS ATTEMPT: ${extra}` : ""}`;
 }
 
 // Prepara cada referencia como URL pública (Nano Banana) y como base64 (Google / Seedream).
@@ -365,7 +371,8 @@ async function terminarFormato(formatoId, episodioId, r, usuario) {
       if (t.estado === "lista") buf = t.buffer || (await descargar(t.url));
     }
     if (!tipoImagen(buf)) throw new Error("El archivo recibido no es una imagen.");
-    const [key, mini] = await Promise.all([storage.guardar("formatos", buf, tipoImagen(buf)), miniaturaFormato(buf).then((m) => storage.guardar("mini", m, "jpg"))]);
+    buf = await reducirFormato(buf);
+    const [key, mini] = await Promise.all([storage.guardar("formatos", buf, "jpg"), miniaturaFormato(buf).then((m) => storage.guardar("mini", m, "jpg"))]);
     await q(`UPDATE formatos SET estado = 'lista', imagen = imagen || $2::jsonb, actualizado = now() WHERE id = $1`, [formatoId, { key, mini }]);
     await repo.tocarEpisodio(episodioId);
   } catch (e) {
@@ -457,6 +464,13 @@ async function hEvaluar({ propuestaId, key, prioridad, sinReintento }) {
       const h = c.huella || (c.actorId ? await biblioteca.huellaDe(c.actorId) : null);
       if (h) objetivos.push({ personaje: c.personaje, huella: h });
     }
+    // Personas de más: el detector local encontró más caras que las pedidas.
+    const pedidas = p.data.personajes_en_portada || [];
+    if (pedidas.length && enPortada?.length > pedidas.length) {
+      ev.extras = enPortada.length - pedidas.length;
+      ev.aprobada = false;
+      ev.problemas = [`Hay ${ev.extras === 1 ? "una persona" : `${ev.extras} personas`} de más (solo deben salir: ${pedidas.join(", ")})`, ...(ev.problemas || [])].slice(0, 3);
+    }
     // Sin caras detectadas no se puede medir: no se castiga (evita repintados pagados por un falso "no se parece").
     if (objetivos.length && !enPortada?.length) ev.sinMedicion = true; // se avisa en la tarjeta
     if (objetivos.length && enPortada?.length) {
@@ -490,7 +504,8 @@ async function hEvaluar({ propuestaId, key, prioridad, sinReintento }) {
   if (!fila) return;
   if (reintentar) {
     const extra = [...ev.problemas, ...(ev.parecido?.some((x) => x.sim < 0.35) ? ["MATCH THE REFERENCE FACES EXACTLY: same facial structure, same age, same skin tone"] : []),
-      ...(ev.duplicados?.length ? [`ONLY ONE PERSON may have the face of ${ev.duplicados.join(", ")}; every other person needs a clearly different face and hair`] : [])].join("; ");
+      ...(ev.duplicados?.length ? [`ONLY ONE PERSON may have the face of ${ev.duplicados.join(", ")}; every other person needs a clearly different face and hair`] : []),
+      ...(ev.extras ? [`REMOVE ALL EXTRA PEOPLE: the image must show ONLY ${(p.data.personajes_en_portada || []).join(", ")}`] : [])].join("; ");
     // La versión con defectos se guarda (se puede restaurar) en vez de perderse.
     await q("INSERT INTO versiones (propuesta_id, data, imagen, evaluacion, feedback) VALUES ($1,$2,$3,$4,$5)",
       [propuestaId, p.data, p.imagen, ev, { objetivo: "portada", razones: ["Revisión automática"], comentario: ev.problemas.join("; ") }]);
@@ -828,7 +843,8 @@ export async function iniciarWorkers() {
     q("UPDATE episodios SET eligiendo = false, error = $2, actualizado = now() WHERE id = $1", [episodioId, msg(e, "No se pudieron escribir la descripción y los tags.")]), c.claude);
   // Los videos originales pesan mucho: se borran tras VIDEO_RETENTION_DAYS (las portadas y cuadros se quedan).
   await trabajo("limpieza", async () => {
-    const dias = Number(process.env.VIDEO_RETENTION_DAYS || 7);
+    await limpiarAlmacenamiento().catch((e) => console.warn("Limpieza:", e.message));
+    const dias = Number(process.env.VIDEO_RETENTION_DAYS || 3);
     // Subidas de video interrumpidas (el proceso se reinició a media subida): sus temporales se borran a las 12 h.
     if (!storage.esS3) {
       const carpeta = storage.rutaLocal("videos/x.mp4").replace(/x\.mp4$/, "");
@@ -850,6 +866,65 @@ export async function iniciarWorkers() {
   await boss.schedule("limpieza", "0 9 * * *"); // 3 a. m. hora de México
   await boss.schedule("vigilante", "*/5 * * * *");
   console.log(`Workers listos · Claude x${c.claude} · imágenes x${c.images} · proveedores: ${imagen.orden().join(" → ") || "ninguno"}`);
+}
+
+// ---------- Retención: lo que ya no se necesita se borra solo (configurable en días) ----------
+// Nunca se borra: la portada elegida, las versiones de redes/Prisma Plus listas, las fotos de actores ni los perfiles.
+const diasEnv = (k, d) => Number(process.env[k] || d);
+async function limpiarAlmacenamiento() {
+  const n = {};
+  // Transcripciones y subtítulos (texto pesado en la base): ya se usaron para escribir la historia.
+  n.transcripciones = (await q(`UPDATE episodios SET video = (video - 'transcripcion' - 'subtitulos') || '{"tieneTexto":true}'::jsonb
+    WHERE (video ? 'transcripcion' OR video ? 'subtitulos') AND creado < now() - make_interval(days => $1) AND estado NOT IN ('en_cola','pensando')`,
+    [diasEnv("RETENCION_TEXTO_DIAS", 7)])).rowCount;
+  // Cuadros del video: se quedan solo los que usa el cast o la escena de la portada.
+  n.cuadros = 0;
+  for (const e of await all(`SELECT id, video, brief, "cast" FROM episodios WHERE jsonb_array_length(coalesce(video->'cuadros','[]'::jsonb)) > 0
+      AND creado < now() - make_interval(days => $1) AND estado NOT IN ('en_cola','pensando') LIMIT 300`, [diasEnv("RETENCION_CUADROS_DIAS", 14)])) {
+    const usados = new Set([...(e.brief?.cuadros_momento || []), ...(e.cast || []).flatMap((c) => c.fotos || [])]);
+    const sobran = (e.video.cuadros || []).filter((k) => !usados.has(k));
+    if (!sobran.length) continue;
+    for (const k of sobran) { await storage.borrar(k); n.cuadros++; }
+    await q(`UPDATE episodios SET video = video || $2::jsonb WHERE id = $1`, [e.id, { cuadros: (e.video.cuadros || []).filter((k) => usados.has(k)) }]);
+  }
+  // Propuestas reemplazadas por "3 nuevas" (archivadas): se borran sus imágenes.
+  n.archivadas = 0;
+  for (const p of await all(`SELECT id, imagen FROM propuestas WHERE archivada AND imagen ? 'key' AND creado < now() - make_interval(days => $1) LIMIT 1000`,
+      [diasEnv("RETENCION_ARCHIVADAS_DIAS", 30)])) {
+    await storage.borrar(p.imagen.key); if (p.imagen.mini) await storage.borrar(p.imagen.mini);
+    await q(`UPDATE propuestas SET imagen = (imagen - 'key' - 'mini') || '{"borrada":true}'::jsonb WHERE id = $1`, [p.id]); n.archivadas++;
+  }
+  // "Anteriores": se conservan siempre las 3 más recientes de cada propuesta; las demás, pasado el plazo, se borran.
+  n.anteriores = 0;
+  for (const v of await all(`SELECT id, imagen FROM (SELECT id, imagen, creado, row_number() OVER (PARTITION BY propuesta_id ORDER BY creado DESC) AS r FROM versiones) x
+      WHERE r > 3 AND creado < now() - make_interval(days => $1) LIMIT 1000`, [diasEnv("RETENCION_ANTERIORES_DIAS", 30)])) {
+    const usada = v.imagen?.key && await one("SELECT 1 FROM propuestas WHERE imagen->>'key' = $1", [v.imagen.key]);
+    if (!usada) { if (v.imagen?.key) await storage.borrar(v.imagen.key); if (v.imagen?.mini) await storage.borrar(v.imagen.mini); }
+    await q("DELETE FROM versiones WHERE id = $1", [v.id]); n.anteriores++;
+  }
+  // Propuestas que no se eligieron (el episodio ya tiene elegida): se queda solo la miniatura.
+  n.noElegidas = 0;
+  for (const p of await all(`SELECT p.id, p.imagen FROM propuestas p JOIN episodios e ON e.id = p.episodio_id
+      WHERE NOT p.archivada AND e.elegida IS NOT NULL AND e.elegida <> p.id AND p.imagen ? 'mini' AND p.imagen->>'key' <> p.imagen->>'mini'
+      AND p.creado < now() - make_interval(days => $1) LIMIT 1000`, [diasEnv("RETENCION_NO_ELEGIDAS_DIAS", 60)])) {
+    const enVersion = await one("SELECT 1 FROM versiones WHERE imagen->>'key' = $1", [p.imagen.key]);
+    if (!enVersion) await storage.borrar(p.imagen.key);
+    await q(`UPDATE propuestas SET imagen = imagen || jsonb_build_object('key', imagen->>'mini', 'reducida', true) WHERE id = $1`, [p.id]); n.noElegidas++;
+  }
+  // Versiones de redes que fallaron (no tienen imagen).
+  n.formatosFallidos = (await q(`DELETE FROM formatos WHERE estado = 'error' AND creado < now() - interval '7 days'`)).rowCount;
+  if (Object.values(n).some(Boolean)) console.log("Limpieza:", JSON.stringify(n));
+  // Aviso si el disco local se está llenando (más del 85 %).
+  if (!storage.esS3) {
+    const d = await fs.statfs(config.storage.localDir).catch(() => null);
+    const usado = d ? 1 - d.bavail / d.blocks : 0;
+    if (usado > 0.85) {
+      const msg = `⚠️ Gancho: el disco está al ${Math.round(usado * 100)} %. Agranda el disco o baja los días de retención.`;
+      console.warn(msg);
+      await notificar(null, msg).catch(() => {});
+    }
+  }
+  return n;
 }
 
 export async function estadoCola() {
