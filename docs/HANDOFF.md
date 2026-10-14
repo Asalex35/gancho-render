@@ -1,7 +1,7 @@
 # Gancho by Prismáticoos — documento de entrega
 
 > Para el equipo o el asistente que va a llevar Gancho al **ERP de Prismáticoos** y correrlo en la **Mac mini**.
-> Estado al 14 oct 2026 · versión **v0.7.0** · repo privado `github.com/Asalex35/gancho` (rama `main`, etiquetas `v0.1.0`…`v0.6.2`, historial en `CHANGELOG.md`).
+> Estado al 14 oct 2026 · versión **v0.8.0** · repo privado `github.com/Asalex35/gancho` (rama `main`, etiquetas `v0.1.0`…`v0.6.2`, historial en `CHANGELOG.md`).
 > Este documento no contiene llaves ni contraseñas: viven en `.env` (local) y en el panel de Render.
 
 ---
@@ -71,6 +71,8 @@ Historial **por perfil**: cada usuario ve solo lo suyo; el admin tiene el interr
 `/api/me`, `/api/episodios[/:id]` (+ `/generar`, `/formatos`, `/portada.jpg`, `/paquete`, `/portada-propia`), `/api/propuestas/:id/{elegir,rehacer,ajustar,reintentar,restaurar,versiones,formatos}`, `/api/formatos/{tipos,:id/descargar}`, `/api/prisma`, `/api/lotes/*`, `/api/auto/*` (subida en 2 pasos con firma), `/api/actores/*`, `/api/canales`, `/api/competencia[/youtube]`, `/api/admin/*` (usuarios, canales, uso, diagnóstico de cola).
 
 ## 4. Calidad y reglas que costaron trabajo (no perderlas)
+
+- **Perfiles de actores automáticos** y **hacks con todos los episodios**: ver `docs/INTEGRACION-ERP.md` §4c. **Nube/escalar**: §4b.
 
 - **Títulos**: sin edades ni nombres propios (arquetipos: madre, novia, millonario), 45–70 caracteres, no describen la portada ni revelan el final. Con Haiku salían narrativos → por eso lo creativo va con Sonnet.
 - **Caras**: todos los actores con foto salen en cada portada (hasta 4); cada cara de referencia es de un solo personaje (evita "dos Yosuanis"); los personajes sin foto llevan rasgos distintos; nombres de personaje comparados con tolerancia ("La novia" = "Novia").

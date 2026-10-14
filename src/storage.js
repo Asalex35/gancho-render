@@ -3,7 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, HeadBucketCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, HeadBucketCommand,
+  CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { config } from "./config.js";
 
@@ -95,4 +96,21 @@ export async function guardarDesdeArchivo(key, ruta) {
 export async function entradaFfmpeg(key) {
   if (!s3) return local(key);
   return getSignedUrl(s3, new GetObjectCommand({ Bucket: S.bucket, Key: key }), { expiresIn: 6 * 3600 });
+}
+
+// ---------- Videos grandes en la nube: subida en partes directo al bucket (S3 / DigitalOcean Spaces / R2) ----------
+// El navegador sube cada parte a una URL firmada; el servidor nunca carga el video. El bucket debe exponer el header ETag (CORS).
+export async function iniciarMultiparte(key, tamano, parte) {
+  const { UploadId } = await s3.send(new CreateMultipartUploadCommand({ Bucket: S.bucket, Key: key, ContentType: mimeDe(key) }));
+  const n = Math.ceil(tamano / parte);
+  const urls = await Promise.all(Array.from({ length: n }, (_, i) =>
+    getSignedUrl(s3, new UploadPartCommand({ Bucket: S.bucket, Key: key, UploadId, PartNumber: i + 1 }), { expiresIn: 12 * 3600 })));
+  return { uploadId: UploadId, urls };
+}
+export async function completarMultiparte(key, uploadId, partes) {
+  await s3.send(new CompleteMultipartUploadCommand({ Bucket: S.bucket, Key: key, UploadId: uploadId,
+    MultipartUpload: { Parts: partes.map((p) => ({ ETag: p.etag, PartNumber: p.n })) } }));
+}
+export async function cancelarMultiparte(key, uploadId) {
+  await s3.send(new AbortMultipartUploadCommand({ Bucket: S.bucket, Key: key, UploadId: uploadId })).catch(() => {});
 }

@@ -6,7 +6,11 @@ import { q, one, all } from "./db.js";
 import * as storage from "./storage.js";
 import * as caras from "./caras.js";
 
-const MAX_POR_ACTOR = 40;
+// Perfil del actor: sus fotos oficiales (nunca se borran) + las mejores caras sacadas de los episodios.
+const MAX_POR_ACTOR = Number(process.env.CARAS_POR_ACTOR || 24); // caras de episodio que se conservan
+const POR_ANGULO = 4;    // mínimo que se cuida de cada ángulo (frente, 3/4, perfil) para tener variedad
+const GEMELA = 0.93;     // casi la misma imagen: solo se queda la mejor
+const PERTENECE = 0.42;  // una cara nueva debe parecerse al perfil para entrar (no ensuciarlo con otra persona)
 export const RECONOCER = 0.45; // similitud mínima para decir "es este actor"
 
 // Cara principal de una foto subida a la biblioteca (una por foto).
@@ -61,15 +65,40 @@ export async function identificar(huella) {
 }
 
 // Guarda las mejores caras de un episodio en la biblioteca del actor (se queda con las 40 mejores).
+// Mejora el perfil del actor con las caras de un episodio: agrega las buenas, reemplaza casi-duplicadas peores,
+// ignora caras de otra persona y poda las que sobran cuidando que queden caras de frente, 3/4 y perfil.
 export async function agregarDeEpisodio(actorId, elegidas, episodioId) {
+  const actuales = await all("SELECT id, key, huella, calidad, giro, origen FROM actor_caras WHERE actor_id = $1 ORDER BY calidad DESC", [actorId]);
+  const centro = actuales.length ? caras.promedio(actuales.slice(0, 12).map((f) => f.huella)) : null;
+  const r = { agregadas: 0, reemplazadas: 0, ignoradas: 0, borradas: 0 };
   for (const c of elegidas) {
+    if (!c.rostro || !c.huella) continue;
+    if (centro && caras.similitud(centro, c.huella) < PERTENECE) { r.ignoradas++; continue; }
+    const gemela = actuales.find((f) => caras.similitud(f.huella, c.huella) > GEMELA);
+    if (gemela && (gemela.origen === "foto" || gemela.calidad >= c.calidad)) { r.ignoradas++; continue; }
+    if (gemela) {
+      await q("DELETE FROM actor_caras WHERE id = $1", [gemela.id]); await storage.borrar(gemela.key);
+      actuales.splice(actuales.indexOf(gemela), 1); r.reemplazadas++;
+    }
     const key = await storage.guardar("rostros", c.rostro, "jpg");
-    await q(`INSERT INTO actor_caras (actor_id, key, huella, calidad, giro, origen, episodio_id) VALUES ($1,$2,$3,$4,$5,'episodio',$6)`,
+    const fila = await one(`INSERT INTO actor_caras (actor_id, key, huella, calidad, giro, origen, episodio_id) VALUES ($1,$2,$3,$4,$5,'episodio',$6) RETURNING id, key, huella, calidad, giro, origen`,
       [actorId, key, c.huella, c.calidad, c.giro, episodioId]);
+    actuales.push(fila); r.agregadas++;
   }
-  const sobran = await all(`SELECT id, key FROM actor_caras WHERE actor_id = $1 AND origen = 'episodio'
-    ORDER BY calidad DESC OFFSET $2`, [actorId, MAX_POR_ACTOR]);
-  for (const s of sobran) { await q("DELETE FROM actor_caras WHERE id = $1", [s.id]); await storage.borrar(s.key); }
+  // Poda: se quedan las mejores, pero con variedad de ángulos (no 24 caras de frente iguales).
+  const deEpisodio = actuales.filter((f) => f.origen === "episodio").sort((a, b) => b.calidad - a.calidad);
+  if (deEpisodio.length > MAX_POR_ACTOR) {
+    const angulo = (g) => (g < 0.15 ? "frente" : g <= 0.45 ? "tres" : "perfil");
+    const quedan = new Set();
+    const minimo = Math.min(POR_ANGULO, Math.floor(MAX_POR_ACTOR / 3)); // la variedad nunca pasa del límite
+    for (const a of ["frente", "tres", "perfil"]) deEpisodio.filter((f) => angulo(f.giro) === a).slice(0, minimo).forEach((f) => quedan.add(f.id));
+    for (const f of deEpisodio) { if (quedan.size >= MAX_POR_ACTOR) break; quedan.add(f.id); }
+    for (const f of deEpisodio.filter((x) => !quedan.has(x.id))) {
+      await q("DELETE FROM actor_caras WHERE id = $1", [f.id]); await storage.borrar(f.key); r.borradas++;
+    }
+  }
+  if (r.agregadas || r.borradas) console.log(`Biblioteca: actor ${String(actorId).slice(0, 8)} +${r.agregadas} caras, ${r.reemplazadas} mejoradas, ${r.borradas} borradas, ${r.ignoradas} ignoradas`);
+  return r;
 }
 
 // Actor nuevo que Gancho no conoce: se crea con el nombre del personaje para que el equipo lo renombre.

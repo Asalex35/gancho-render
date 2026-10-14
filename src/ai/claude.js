@@ -148,7 +148,7 @@ GIRO PRINCIPAL: ${b.giro || "(dedúcelo)"}
 MOMENTO CUMBRE: ${b.momento || "(dedúcelo)"}
 DESENLACE (no revelar nunca): ${b.desenlace || "(desconocido)"}
 ESCENARIO: ${b.escenario || "libre"}
-NOTAS DEL EQUIPO: ${b.notas || "ninguna"}
+NOTAS DEL EQUIPO: ${b.notas || "ninguna"}${b.hack ? "\nESTE VIDEO ES UN HACK (recopilación de varios episodios): portada, título, descripción y tags SOLO de la PRIMERA historia; no menciones las demás." : ""}
 
 CAST:
 ${cast || "(sin cast definido)"}`;

@@ -423,6 +423,9 @@ async function vistaEditor(id) {
     h("section", { class: "panel stack" },
       h("h2", {}, "1. Cuéntame la historia"),
       h("div", { class: "campo-seg" }, h("span", { class: "etq" }, "Canal"), seg(opcionesCanal(), st.canal, (v) => { st.canal = v; guardarBorrador(); })),
+      h("label", { class: "row", style: { gap: "8px", cursor: "pointer" } },
+        h("input", { type: "checkbox", checked: Boolean(st.hack), onchange: (e) => { st.hack = e.target.checked; guardarBorrador(); } }),
+        h("span", {}, h("b", {}, "Es un hack"), h("span", { class: "muted" }, " · varios episodios juntos: portada, título y descripción solo del primero"))),
       campo("sinopsis", "¿De qué trata?", "Cuéntala como se la contarías a alguien: quién, qué pasa, el giro y cómo termina. Es lo único obligatorio.", true,
         "Ej. Una madre orgullosa rechaza al prometido de su hija. En su cumpleaños se desmaya y en el hospital descubre que el enfermero que la cuida es ese mismo prometido…")),
     h("section", { class: "panel stack" },
@@ -576,6 +579,19 @@ function pintarEpisodio(p) {
     partes.push(h("details", { style: { marginBottom: "20px" } }, h("summary", { class: "eyebrow", style: { cursor: "pointer", marginBottom: "10px" } }, "El gancho de la historia"),
       h("div", { class: "gancho" }, [["Transgresión", g.transgresion], ["Testigo / víctima", g.testigo], ["Objeto clave", g.objeto], ["Escenario", g.escenario], ["Final que se oculta", g.final_oculto]]
         .map(([k, v]) => h("div", {}, h("div", { class: "eyebrow" }, k), h("p", {}, v))))));
+  }
+  if (p.video?.hack && p.video?.episodiosHack?.length && !pensando && p.estado !== "procesando") {
+    const mmss = (s) => `${Math.floor(s / 3600) ? `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}` : Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+    const caja = h("input", { type: "text", placeholder: "ej. 38:20", style: { maxWidth: "120px" } });
+    partes.push(h("section", { class: "panel stack", style: { marginBottom: "22px", gap: "10px" } },
+      h("div", { class: "eyebrow" }, "Hack · episodios que encontró Gancho"),
+      h("div", { class: "row", style: { gap: "6px" } }, p.video.episodiosHack.map((e) =>
+        h("span", { class: `tag${e.n === 1 ? " ok" : ""}${e.metodo === "estimado" ? " warn" : ""}`, title: e.metodo === "estimado" ? "Calculado: no se encontró un corte claro" : "" },
+          `Episodio ${e.n}: ${mmss(e.desde)}–${mmss(e.hasta)}${e.n === 1 ? " · portada y textos" : ""}`))),
+      h("div", { class: "row", style: { gap: "8px" } }, h("span", { class: "muted", style: { fontSize: ".85rem" } }, "¿El episodio 1 termina en otro minuto?"), caja,
+        h("button", { class: "btn small", type: "button", onclick: () => confirmar("¿Volver a leer el video con ese corte?",
+          `Gancho lee de nuevo solo el episodio 1 y hace 3 propuestas nuevas (≈${3 * (me.creditosPorImagen || 18)} créditos).`,
+          async () => { await api(`/api/auto/${p.id}/corte`, { method: "POST", body: { finPrimero: caja.value } }); recargar(); }, "Sí, volver a leer") }, "Corregir y volver a leer"))));
   }
   if ((p.formatos || []).length) partes.push(h("section", { class: "stack", style: { marginBottom: "26px" } },
     h("div", { class: "row", style: { justifyContent: "space-between" } }, h("h2", { style: { margin: 0 } }, "Redes y Prisma Plus"),
@@ -1085,6 +1101,27 @@ function pasosVideo(etapa) {
 let subiendo = null;
 // Sube un video al servidor en partes de 64 MB (pasa por Cloudflare y aguanta cortes de internet): si una parte falla,
 // el servidor dice en qué byte va y se continúa desde ahí; hasta 6 fallos seguidos antes de rendirse.
+// Nube: cada parte va directo al bucket con su URL firmada (3 a la vez); al final el servidor pide unirlas.
+async function subirMultiparte(f, r, barraEl) {
+  const { uploadId, urls, parte } = r.multiparte;
+  const listas = new Array(urls.length);
+  let enviados = 0;
+  const subirUna = async (i) => {
+    for (let intento = 1; intento <= 6; intento++) {
+      try {
+        const res = await fetch(urls[i], { method: "PUT", body: f.slice(i * parte, Math.min(f.size, (i + 1) * parte)) });
+        const etag = res.headers.get("ETag");
+        if (res.ok && etag) { listas[i] = { n: i + 1, etag }; enviados += Math.min(parte, f.size - i * parte); barraEl.style.width = `${(enviados / f.size) * 100}%`; return; }
+        if (res.ok && !etag) throw new Error("El almacenamiento no expone el ETag (CORS). Avisa al administrador.");
+      } catch (e) { if (/ETag/.test(e.message)) throw e; }
+      await new Promise((ok) => setTimeout(ok, 1500 * intento));
+    }
+    throw new Error("Se cortó la subida varias veces. Revisa tu conexión e inténtalo otra vez.");
+  };
+  let siguiente = 0;
+  await Promise.all(Array.from({ length: Math.min(3, urls.length) }, async () => { while (siguiente < urls.length) await subirUna(siguiente++); }));
+  await api("/api/auto/subida/completar", { method: "POST", body: { key: r.key, uploadId, firma: r.firma, partes: listas } });
+}
 async function subirEnPartes(f, r, barraEl) {
   const tam = r.parte || 64 * 1024 * 1024;
   let desde = 0, fallos = 0;
@@ -1132,7 +1169,8 @@ async function vistaAuto() {
   notas.addEventListener("input", () => { st.notas = notas.value; guardar(); });
   // Hack: recopilación de varios episodios; portada y título solo del 1er episodio.
   const finPrimero = h("input", { type: "text", inputmode: "numeric", placeholder: "Opcional: el 1º termina en (ej. 38:20)", style: { maxWidth: "260px" } });
-  const nEpisodios = h("input", { type: "number", min: 2, max: 6, value: st.episodios || 3, style: { width: "70px" }, oninput: () => { st.episodios = Number(nEpisodios.value) || 3; guardar(); } });
+  const nEpisodios = h("select", { style: { width: "auto" }, onchange: () => { st.episodios = Number(nEpisodios.value) || 0; guardar(); } },
+    [["0", "Que Gancho los cuente"], ...[2, 3, 4, 5, 6].map((n) => [String(n), `${n} episodios`])].map(([v, t]) => h("option", { value: v, selected: String(st.episodios || 0) === v }, t)));
   const detallesHack = h("div", { class: "row", style: { gap: "8px" }, hidden: !st.hack }, h("label", { class: "row", style: { gap: "6px" } }, "Episodios en el video", nEpisodios), finPrimero);
   const hack = h("label", { class: "row", style: { gap: "8px", cursor: "pointer" } },
     h("input", { type: "checkbox", checked: Boolean(st.hack), onchange: (e) => { st.hack = e.target.checked; detallesHack.hidden = !st.hack; guardar(); } }),
@@ -1151,7 +1189,8 @@ async function vistaAuto() {
       progreso.replaceChildren(h("span", {}, `Subiendo ${n + 1} de ${files.length}: ${f.name}`), h("div", { class: "barra-subida" }, barraEl));
       try {
         const r = await api("/api/auto/subida", { method: "POST", body: { nombre: f.name, tamano: f.size } });
-        if (r.url) {
+        if (r.multiparte) await subirMultiparte(f, r, barraEl);
+        else if (r.url) {
           // R2/S3: una sola subida directa al almacenamiento.
           await new Promise((resolver, rechazar) => {
             const x = new XMLHttpRequest();
@@ -1163,7 +1202,7 @@ async function vistaAuto() {
           });
         } else await subirEnPartes(f, r, barraEl);
         await api("/api/auto/episodios", { method: "POST", body: { canal: st.canal, key: r.key, nombreArchivo: f.name, notas: st.notas, subtitulos: files.length === 1 ? subAuto.texto : null,
-          hack: Boolean(st.hack), episodios: st.episodios || 3, finPrimero: files.length === 1 ? finPrimero.value.trim() : "" } });
+          hack: Boolean(st.hack), episodios: st.episodios || 0, finPrimero: files.length === 1 ? finPrimero.value.trim() : "" } });
         ok++;
       } catch (e) { toast(`${f.name}: ${e.message}`, true); }
     }

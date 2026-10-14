@@ -1,5 +1,10 @@
 # Cambios de Gancho
 
+## 0.8.0 — 2026-10-14
+- **Perfiles de actores automáticos**: el lector de video busca caras en todo el episodio (no solo 5 min), crea el perfil de los actores que no conoce y lo mejora en cada video (agrega caras mejores, reemplaza casi-duplicadas, ignora otras personas y borra las que sobran, con variedad de ángulos; las fotos oficiales nunca se borran).
+- **Hacks: todos los episodios**: detecta Episodio 1, 2, 3… con pantallas negras + silencio (o con el número indicado); portada, título y descripción solo del 1. Lista visible en el episodio y botón para corregir el corte y volver a leer. Casilla "Es un hack" en Manual.
+- **Nube**: videos de hasta 20 GB suben en partes directo a S3/Spaces/R2; `Dockerfile` para DigitalOcean u otra nube; guía para escalar con `ROLE=web` / `ROLE=worker`.
+
 ## 0.7.0 — 2026-10-14 · Listo para el ERP de Prismaticoos
 - **Videos más largos**: hasta `MAX_VIDEO_GB` (20 GB por defecto). Sin S3 se suben en partes de 64 MB que pasan por Cloudflare (corta peticiones de más de 100 MB) y se reanudan si se corta el internet.
 - **Modo ERP** (`src/erp.js`, todo por variables de entorno):

@@ -36,7 +36,6 @@ const ROLES = ["transgresor", "victima", "testigo", "villano", "otro"];
 const IDIOMAS = { es: "Español", en: "Inglés", pt: "Portugués" };
 // Tamaño máximo de un video (configurable). Sin S3 se sube en partes, así pasa por Cloudflare (corta peticiones de más de 100 MB).
 const LIMITE_VIDEO = Number(process.env.MAX_VIDEO_GB || 20) * 1024 ** 3;
-const LIMITE_S3 = 5 * 1024 ** 3; // una subida directa a R2/S3 admite hasta 5 GB
 const PARTE_MAX = 64 * 1024 ** 2;
 
 // Origen de R2/S3 para que el navegador pueda subir videos directo al bucket.
@@ -237,6 +236,7 @@ export function crearApp() {
   async function datosEpisodio(b) {
     const canal = (await repo.canal(b.canal)) ? b.canal : (await repo.canales())[0].id;
     const brief = {
+      hack: b.hack === true,
       sinopsis: limpiar(b.sinopsis, 4000), giro: limpiar(b.giro, 600), momento: limpiar(b.momento, 600),
       desenlace: limpiar(b.desenlace, 600), escenario: limpiar(b.escenario, 200), notas: limpiar(b.notas, 600),
       cuadros_momento: (Array.isArray(b.cuadros_momento) ? b.cuadros_momento : []).filter((k) => typeof k === "string" && k.startsWith("cuadros/") && storage.keyValida(k)).slice(0, 2),
@@ -608,9 +608,14 @@ export function crearApp() {
     const ext = String(req.body.nombre || "").split(".").pop().toLowerCase();
     if (!storage.EXT_VIDEO.includes(ext)) throw publico("Sube un video MP4, MOV, WEBM o MKV.");
     const gb = Math.round(LIMITE_VIDEO / 1024 ** 3);
-    if (Number(req.body.tamano) > (storage.esS3 ? LIMITE_S3 : LIMITE_VIDEO)) throw publico(`El video pesa más de ${storage.esS3 ? 5 : gb} GB. Expórtalo más ligero (H.264, 1080p).`);
+    if (Number(req.body.tamano) > LIMITE_VIDEO) throw publico(`El video pesa más de ${gb} GB. Expórtalo más ligero (H.264, 1080p).`);
     await hayCupo(req.usuario, 3);
     const key = storage.nuevaKey("videos", ext);
+    // Nube: los videos de más de 64 MB se suben en partes directo al bucket (hasta MAX_VIDEO_GB).
+    if (storage.esS3 && Number(req.body.tamano) > PARTE_MAX) {
+      const m = await storage.iniciarMultiparte(key, Number(req.body.tamano), PARTE_MAX);
+      return res.json({ key, multiparte: { ...m, parte: PARTE_MAX }, firma: firmaSubida(key, req.usuario) });
+    }
     if (storage.esS3) return res.json({ key, url: await storage.urlDeSubida(key), tipo: storage.mimeDe(key) });
     // Sin S3: el paso 1b solo acepta la llave que se emitió aquí, para este usuario.
     res.json({ key, local: true, firma: firmaSubida(key, req.usuario), parte: PARTE_MAX });
@@ -656,6 +661,18 @@ export function crearApp() {
     subiendoVideo.delete(req.usuario);
     res.json({ ok: true, recibido, listo: true });
   }));
+  // 1c) Nube: el navegador avisa que ya subió todas las partes; el bucket las une.
+  app.post("/api/auto/subida/completar", envolver(async (req, res) => {
+    const key = String(req.body?.key || ""), uploadId = String(req.body?.uploadId || "");
+    const firma = Buffer.from(String(req.body?.firma || "")), esperada = Buffer.from(firmaSubida(key, req.usuario));
+    if (!storage.esS3 || !storage.keyValida(key) || !key.startsWith("videos/") || !uploadId || firma.length !== esperada.length || !crypto.timingSafeEqual(firma, esperada)) throw publico("Subida no válida.", 403);
+    const partes = (Array.isArray(req.body?.partes) ? req.body.partes : []).map((p) => ({ n: Number(p.n), etag: String(p.etag || "") }))
+      .filter((p) => p.n >= 1 && p.n <= 10000 && /^"?[A-Za-z0-9-]+"?$/.test(p.etag)).sort((a, b) => a.n - b.n);
+    if (!partes.length) throw publico("Subida no válida.");
+    try { await storage.completarMultiparte(key, uploadId, partes); }
+    catch (e) { await storage.cancelarMultiparte(key, uploadId); throw publico("No se pudo armar el video en el almacenamiento. Súbelo de nuevo.", 400); }
+    res.json({ ok: true });
+  }));
   // 2) Crea el episodio y lo manda a la cola.
   app.post("/api/auto/episodios", envolver(async (req, res) => {
     const canal = await repo.canal(req.body.canal);
@@ -667,21 +684,34 @@ export function crearApp() {
     const nombre = limpiar(req.body.nombreArchivo, 160);
     // Hack: "12:30", "12.5" o "12" (minutos) → segundos.
     const hack = req.body.hack === true;
-    // Acepta "38", "38.5" (minutos), "38:20" o "1:05:30".
-    const t = String(req.body.finPrimero ?? "").trim();
-    const partes = /^\d{1,3}(:\d{1,2}){0,2}$/.test(t) ? t.split(":").map(Number) : /^\d{1,3}\.\d+$/.test(t) ? [Number(t), 0] : null;
-    const seg = partes ? (partes.length === 3 ? partes[0] * 3600 + partes[1] * 60 + partes[2] : partes.length === 2 ? partes[0] * 60 + partes[1] : partes[0] * 60) : 0;
-    const finPrimero = hack && seg > 0 ? Math.round(seg) : null;
-    const episodios = hack ? Math.min(6, Math.max(2, Number(req.body.episodios) || 3)) : null;
+    const seg = segundosDeTexto(req.body.finPrimero);
+    const finPrimero = hack && seg ? seg : null;
+    // 0 = que Gancho cuente los episodios solo.
+    const episodios = hack ? (Number(req.body.episodios) >= 2 ? Math.min(6, Number(req.body.episodios)) : 0) : null;
     const notasHack = hack ? "HACK: este video junta varios episodios. Portada y título SOLO de la primera historia; ignora las demás. " : "";
     let ep;
     try { ep = await one(`INSERT INTO episodios (titulo, canal, modelo, brief, estado, origen, video, creado_por)
         VALUES ($1,$2,$3,$4,'procesando','auto',$5,$6) RETURNING id`,
-      [`Video: ${nombre.replace(/\.[^.]+$/, "")}`.slice(0, 120), canal.id, canal.modelo, { sinopsis: "", notas: (notasHack + limpiar(req.body.notas, 600)).slice(0, 600) },
+      [`Video: ${nombre.replace(/\.[^.]+$/, "")}`.slice(0, 120), canal.id, canal.modelo, { sinopsis: "", hack, notas: (notasHack + limpiar(req.body.notas, 600)).slice(0, 600) },
         { key, nombre, etapa: "en_cola", subtitulos: limpiar(req.body.subtitulos, 400000) || null, hack, finPrimero, episodios }, req.usuario]);
     } catch (e) { await devolverCupo(req.usuario, 3); throw e; }
     await enviar("ingesta", { episodioId: ep.id, usuario: req.usuario }, { prioridad: PRIORIDAD.lote });
     res.json(ep);
+  }));
+  // Corregir dónde termina el episodio 1 de un hack y volver a leer el video con ese corte.
+  app.post("/api/auto/:id/corte", envolver(async (req, res) => {
+    const id = uuid(req.params.id);
+    const seg = segundosDeTexto(req.body?.finPrimero);
+    if (!seg) throw publico("Escribe en qué minuto termina el episodio 1 (ej. 38:20).");
+    const ep = await one("SELECT estado, video FROM episodios WHERE id = $1 AND origen = 'auto'", [id]);
+    if (!ep?.video?.key) throw publico("El video original ya no existe (se borra a los pocos días). Súbelo de nuevo.", 409);
+    if (["procesando", "en_cola", "pensando"].includes(ep.estado)) throw publico("Espera a que termine lo que se está haciendo.", 409);
+    await reservarCupo(req.usuario, 3);
+    await q(`UPDATE episodios SET estado = 'procesando', error = NULL, video = video || $2::jsonb, actualizado = now() WHERE id = $1`,
+      [id, { hack: true, finPrimero: seg, etapa: "en_cola" }]);
+    await enviar("ingesta", { episodioId: id, usuario: req.usuario }, { prioridad: PRIORIDAD.interactiva });
+    await registrar(req, "corregir_corte_hack", { episodio: id, finPrimero: seg });
+    res.status(202).json({ ok: true });
   }));
   app.post("/api/auto/:id/reintentar", envolver(async (req, res) => {
     const r = await q(`UPDATE episodios SET estado = 'procesando', error = NULL, video = video || '{"etapa":"en_cola"}'::jsonb WHERE id = $1 AND origen = 'auto' AND estado = 'error' AND video->>'etapa' = 'error' AND video ? 'key' RETURNING id`, [uuid(req.params.id)]);
@@ -926,6 +956,12 @@ function archivoSeguro(s) { return String(s || "portada").normalize("NFD").repla
 // Reserva atómica del cupo diario: dos lotes simultáneos no pueden pasarse del límite.
 // Solo el administrador puede pedir ver lo de todo el equipo (?todos=1).
 const verTodo = (req) => req.user?.rol === "admin" && req.query.todos === "1";
+// "38", "38.5" (minutos), "38:20" o "1:05:30" → segundos (0 si no se entiende).
+function segundosDeTexto(texto) {
+  const t = String(texto ?? "").trim();
+  const partes = /^\d{1,3}(:\d{1,2}){0,2}$/.test(t) ? t.split(":").map(Number) : /^\d{1,3}\.\d+$/.test(t) ? [Number(t), 0] : null;
+  return partes ? Math.round(partes.length === 3 ? partes[0] * 3600 + partes[1] * 60 + partes[2] : partes.length === 2 ? partes[0] * 60 + partes[1] : partes[0] * 60) : 0;
+}
 const subiendoVideo = new Map(); // usuario → video que está subiendo (una subida a la vez por persona)
 function firmaSubida(key, usuario) {
   return crypto.createHmac("sha256", config.sessionSecret).update(`subida|${key}|${usuario}`).digest("base64url");

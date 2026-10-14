@@ -76,6 +76,52 @@ export async function finPrimeraHistoria(entrada, segundos, episodios = 3) {
   return mejor && mejor.puntos >= 0 ? { seg: Math.round(mejor.seg), metodo: mejor.metodo } : { seg: Math.round(esperado), metodo: "estimado" };
 }
 
+// Hacks: ubica TODOS los episodios del video (1, 2, 3…). Busca en todo el video pantallas negras (solo cuadros clave,
+// rápido aun en 4K) y silencios; un corte fuerte = negro + silencio. Si se sabe cuántos episodios son, busca el mejor corte
+// cerca de donde debería estar cada uno; si no, toma los cortes fuertes separados por al menos minEp.
+// Devuelve [{ n, desde, hasta, metodo }] en segundos.
+export async function cortesEpisodios(entrada, segundos, { episodios = 0, minEp = 8 * 60 } = {}) {
+  const desde = Math.min(60, segundos * 0.05), hasta = Math.max(desde + 1, segundos - Math.min(60, segundos * 0.05));
+  const num = (re, txt) => [...txt.matchAll(re)].map((m) => m.slice(1).map(Number));
+  const [negroTxt, silTxt] = await Promise.all([
+    ffmpeg(["-skip_frame", "nokey", "-ss", String(desde), "-to", String(hasta), "-i", entrada, "-an",
+      "-vf", "scale=160:-2,blackdetect=d=0:pix_th=0.12:pic_th=0.92", "-f", "null", "-"], { timeoutMs: 25 * 60e3 }).catch((e) => e.detalle || ""),
+    ffmpeg(["-ss", String(desde), "-to", String(hasta), "-i", entrada, "-vn", "-af", "silencedetect=n=-38dB:d=0.7", "-f", "null", "-"],
+      { timeoutMs: 25 * 60e3 }).catch((e) => e.detalle || ""),
+  ]);
+  const negros = num(/black_start:([\d.]+) black_end:([\d.]+)/g, negroTxt).map(([a, b]) => ({ ini: desde + a, fin: desde + b }));
+  const silencios = num(/silence_start: ([\d.]+)[\s\S]*?silence_end: ([\d.]+)/g, silTxt).map(([a, b]) => ({ ini: desde + a, fin: desde + b }));
+  const cand = [
+    ...negros.map((n) => {
+      const conSilencio = silencios.some((s) => s.ini < n.fin + 4 && s.fin > n.ini - 4);
+      return { t: n.ini, puntos: Math.min(3, n.fin - n.ini + 0.5) + (conSilencio ? 2 : 0), metodo: conSilencio ? "negro_y_silencio" : "negro" };
+    }),
+    ...silencios.filter((s) => s.fin - s.ini >= 1.5).map((s) => ({ t: s.ini, puntos: Math.min(2.5, s.fin - s.ini), metodo: "silencio" })),
+  ];
+  const cortes = [];
+  if (episodios >= 2) {
+    let previo = 0;
+    for (let k = 1; k < episodios; k++) {
+      const esperado = (segundos * k) / episodios, margen = (segundos / episodios) * 0.35;
+      const lista = cand.filter((c) => c.t > previo + minEp / 2 && Math.abs(c.t - esperado) <= margen && segundos - c.t > minEp / 2)
+        .map((c) => ({ ...c, valor: c.puntos - (3 * Math.abs(c.t - esperado)) / (segundos / episodios) }));
+      const mejor = lista.sort((a, b) => b.valor - a.valor)[0];
+      const t = mejor && mejor.valor > 0 ? mejor.t : esperado;
+      cortes.push({ t, metodo: mejor && mejor.valor > 0 ? mejor.metodo : "estimado" });
+      previo = t;
+    }
+  } else {
+    for (const c of cand.filter((x) => x.puntos >= 3).sort((a, b) => b.puntos - a.puntos)) {
+      if (c.t < minEp || segundos - c.t < minEp || cortes.some((k) => Math.abs(k.t - c.t) < minEp)) continue;
+      cortes.push({ t: c.t, metodo: c.metodo });
+      if (cortes.length >= 9) break;
+    }
+    cortes.sort((a, b) => a.t - b.t);
+  }
+  const bordes = [0, ...cortes.map((c) => Math.round(c.t)), Math.round(segundos)];
+  return bordes.slice(0, -1).map((ini, i) => ({ n: i + 1, desde: ini, hasta: bordes[i + 1], metodo: i === 0 ? (cortes[0]?.metodo || "sin_corte") : cortes[i - 1].metodo }));
+}
+
 export const carpetaTemporal = () => fs.mkdtemp(path.join(os.tmpdir(), "gancho-"));
 
 // Audio comprimido en partes de 20 min (las APIs de transcripción aceptan ~25 MB por archivo).

@@ -109,6 +109,24 @@ npm start                                         # o node server.js
 ```
 En el `.env` del ERP de Carlitos: `GANCHO_URL=http://prisma-server.local:3100` y `GANCHO_SSO_SECRET=<el mismo texto de prueba>`.
 
+## 4b. Nube y escalar (cuando se necesite más velocidad)
+
+- **Contenedor**: `Dockerfile` en la raíz (Node 22, ffmpeg y modelos de caras incluidos). Sirve igual en DigitalOcean (App Platform o Droplet), Render u otra nube.
+- **Escalar**: el mismo programa con distintos papeles, compartiendo Postgres y almacenamiento S3/Spaces/R2:
+  - `ROLE=web` (1–2 instancias): la interfaz y la API.
+  - `ROLE=worker` (las que hagan falta): leen videos, buscan caras, piden imágenes. Más trabajadores = más videos a la vez.
+  - Ajustes por trabajador: `VIDEO_CONCURRENCY` (videos a la vez, 1 por cada ~2 GB de RAM), `IMAGE_CONCURRENCY`, `CLAUDE_CONCURRENCY`.
+  - La cola (pg-boss) reparte el trabajo sola; el vigilante repara lo que se interrumpa en cualquier instancia.
+- **Videos grandes en la nube**: con S3/Spaces/R2 los videos de más de 64 MB suben **en partes directo al bucket** (hasta `MAX_VIDEO_GB`). El bucket debe permitir CORS con `PUT` desde el dominio de Gancho y **exponer el header `ETag`**.
+- **Sin nube (Mac mini)**: `ROLE=all`, disco local `DATA_DIR`; los videos suben en partes de 64 MB a través de Cloudflare.
+
+## 4c. Perfiles de actores y hacks (automático)
+
+- Al leer un video, Gancho busca caras en **todo el episodio** (1 cuadro cada ~10 s, máx. `FACE_SCAN_MAX_FRAMES`=180) además de los tramos donde habla cada personaje.
+- Reconoce a los actores de la biblioteca; si un personaje principal no está, **crea su perfil** («Personaje (sin nombre)») para renombrarlo una vez.
+- Cada video **mejora el perfil**: agrega caras mejores, reemplaza casi-duplicadas peores, ignora caras de otra persona y **borra las que sobran**, conservando variedad (frente, 3/4, perfil). Máximo `CARAS_POR_ACTOR`=24 de episodio; las fotos oficiales nunca se borran.
+- **Hacks**: ubica todos los episodios del video (Episodio 1, 2, 3…) por pantallas negras + silencios; portada, título y descripción salen **solo del episodio 1**. Se puede decir cuántos son o dejar que Gancho los cuente; en el episodio se ve la lista y se puede **corregir el corte** («Corregir y volver a leer»). En Manual hay casilla «Es un hack».
+
 ## 5. Decisiones para Luis (con recomendación)
 
 1. **Dónde corre Gancho en pruebas/producción** — (A, recomendada) en DigitalOcean junto al ERP, como servicio aparte con su Postgres; (B) seguir en Render; (C) la Mac mini (no recomendado para producción: si se apaga, no hay portadas).

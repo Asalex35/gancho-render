@@ -8,6 +8,7 @@
 //   encuentra el registro sin trabajo vivo y lo repara o lo marca con error para reintentar.
 import { PgBoss } from "pg-boss";
 import fs from "node:fs/promises";
+import path from "node:path";
 import { config } from "./config.js";
 import { q, one, all, tx } from "./db.js";
 import * as repo from "./repo.js";
@@ -607,10 +608,15 @@ async function hIngesta({ episodioId, usuario }) {
     // Hack (varios episodios en un video): todo se saca solo del 1er episodio.
     let segundos = total;
     if (ep.video.hack) {
-      const corte = ep.video.finPrimero ? { seg: Math.min(ep.video.finPrimero, total), metodo: "manual" }
-        : await video.finPrimeraHistoria(entrada, total, ep.video.episodios || 3).catch(() => ({ seg: Math.round(total / (ep.video.episodios || 3)), metodo: "estimado" }));
-      segundos = Math.max(60, corte.seg);
-      await etapa("leyendo", { corte });
+      // Ubica cada episodio del hack (1, 2, 3…); portada, título y descripción salen SOLO del episodio 1.
+      const fin1 = ep.video.finPrimero ? Math.min(ep.video.finPrimero, total) : null;
+      let lista = fin1 ? [{ n: 1, desde: 0, hasta: fin1, metodo: "manual" }, { n: 2, desde: fin1, hasta: Math.round(total), metodo: "manual" }]
+        : await video.cortesEpisodios(entrada, total, { episodios: ep.video.episodios || 0 })
+          .catch(() => [{ n: 1, desde: 0, hasta: Math.round(total / (ep.video.episodios || 3)), metodo: "estimado" }]);
+      // Sin cortes claros (no hay pantalla negra entre episodios): se asume el formato usual de 3 episodios y se marca para revisar.
+      if (lista.length === 1 && !fin1) lista = await video.cortesEpisodios(entrada, total, { episodios: 3 }).catch(() => lista);
+      segundos = Math.max(60, lista[0].hasta);
+      await etapa("leyendo", { corte: { seg: lista[0].hasta, metodo: lista[0].metodo }, episodiosHack: lista });
     }
 
     // Cuadros generales (para entender lugares y escenas).
@@ -646,11 +652,22 @@ async function hIngesta({ episodioId, usuario }) {
           for (const u of await caras.analizarCuadro(c.archivo).catch(() => [])) todas.push({ ...u, t: c.t, archivo: c.archivo, hablante: c.hablante });
         }
       }
-      personas = caras.agrupar(todas).filter((g) => g.caras.length >= 2 || g.caras[0].calidad > 6).slice(0, 6);
+      // Recorrido completo: cuadros repartidos en todo el episodio (1 cada ~10 s, máx. FACE_SCAN_MAX_FRAMES) para encontrar
+      // a todos los personajes y sus mejores caras, no solo a los que hablan en los tramos revisados.
+      if (process.env.FACE_SCAN_MODE !== "ventanas") {
+        const sub = path.join(dir, "recorrido");
+        await fs.mkdir(sub, { recursive: true });
+        const n = Math.min(Number(process.env.FACE_SCAN_MAX_FRAMES || 180), Math.max(12, Math.ceil(segundos / 10)));
+        for (const c of await video.extraerCuadros(entrada, segundos, sub, n)) {
+          for (const u of await caras.analizarCuadro(c.archivo).catch(() => [])) todas.push({ ...u, t: c.t, archivo: c.archivo, hablante: null });
+        }
+      }
+      personas = caras.agrupar(todas).filter((g) => g.caras.length >= 2 || g.caras[0].calidad > 6).slice(0, 8);
       for (const [i, g] of personas.entries()) {
         g.n = i + 1;
         g.elegidas = caras.mejores(g, 3);
-        for (const c of g.elegidas) Object.assign(c, await caras.recortes(c.archivo, c.cara));
+        g.paraPerfil = caras.mejores(g, 6); // más caras para mejorar el perfil del actor
+        for (const c of new Set([...g.elegidas, ...g.paraPerfil])) Object.assign(c, await caras.recortes(c.archivo, c.cara));
         const votos = {};
         for (const c of g.caras) if (c.hablante && c.sola) votos[c.hablante] = (votos[c.hablante] || 0) + 1;
         const [h, nv] = Object.entries(votos).sort((a, b) => b[1] - a[1])[0] || [];
@@ -682,8 +699,9 @@ async function hIngesta({ episodioId, usuario }) {
         fotos = [await guardar(a.rostro), await guardar(a.medio)];
         if (b) fotos.push(await guardar(b.rostro));
         huella = g.centro.map((x) => Math.round(x * 1e4) / 1e4);
-        actor = g.actor || (["transgresor", "victima", "villano"].includes(p.rol) ? await biblioteca.crearActorAuto(`${p.personaje} (sin nombre)`, usuario) : null);
-        if (actor) await biblioteca.agregarDeEpisodio(actor.actorId || actor.id, g.elegidas, episodioId);
+        // Si Gancho no conoce al actor, le crea su perfil (para renombrarlo una vez); desde ahí lo reconoce solo en cada video.
+        actor = g.actor || (g.caras.length >= 3 ? await biblioteca.crearActorAuto(`${p.personaje} (sin nombre)`, usuario) : null);
+        if (actor) await biblioteca.agregarDeEpisodio(actor.actorId || actor.id, g.paraPerfil || g.elegidas, episodioId).catch((e) => console.warn("Biblioteca:", e.message));
       } else {
         fotos = p.cuadros.map((n) => keys[n]).filter(Boolean).slice(0, 2);
       }
@@ -692,6 +710,8 @@ async function hIngesta({ episodioId, usuario }) {
         actorId: actor ? (actor.actorId || actor.id) : null, actorNombre: actor?.nombre || null,
         reconocido: Boolean(g?.actor), tieneFotos: fotos.length > 0 });
     }
+    // Actores reconocidos que no quedaron en el cast (secundarios): también se mejora su perfil.
+    for (const g of personas) if (!usadas.has(g.n) && g.actor?.actorId) await biblioteca.agregarDeEpisodio(g.actor.actorId, g.paraPerfil || g.elegidas, episodioId).catch(() => {});
     const brief = { ...ep.brief, sinopsis: r.sinopsis, giro: r.giro, momento: r.momento, desenlace: r.desenlace, escenario: r.escenario,
       duracion_min: duracionMin, cuadros_momento: r.cuadros_momento.map((n) => keys[n]).filter(Boolean).slice(0, 2) };
     const viejos = [...(ep.video.cuadros || [])];
