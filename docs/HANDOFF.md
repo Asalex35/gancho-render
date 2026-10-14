@@ -1,7 +1,7 @@
 # Gancho by Prismáticoos — documento de entrega
 
 > Para el equipo o el asistente que va a llevar Gancho al **ERP de Prismáticoos** y correrlo en la **Mac mini**.
-> Estado al 13 oct 2026 · versión **v0.6.2** · repo privado `github.com/Asalex35/gancho` (rama `main`, etiquetas `v0.1.0`…`v0.6.2`, historial en `CHANGELOG.md`).
+> Estado al 14 oct 2026 · versión **v0.7.0** · repo privado `github.com/Asalex35/gancho` (rama `main`, etiquetas `v0.1.0`…`v0.6.2`, historial en `CHANGELOG.md`).
 > Este documento no contiene llaves ni contraseñas: viven en `.env` (local) y en el panel de Render.
 
 ---
@@ -104,7 +104,9 @@ Historial **por perfil**: cada usuario ve solo lo suyo; el admin tiene el interr
 6. **Migrar datos de Render** (si se quieren conservar): `pg_dump` de la base de Render → `pg_restore` local, y copiar el disco `/var/data` (portadas, actores, rostros, formatos) a `DATA_DIR`. Después apagar el servicio de Render para no pagar doble (~$36 USD/mes).
 7. Respaldos diarios: `pg_dump` + copia de `DATA_DIR`.
 
-## 7. Integración con el ERP — opciones
+## 7. Integración con el ERP — ver `docs/INTEGRACION-ERP.md` (paso a paso para el Claude de la Mac mini)
+
+Resumen de opciones:
 
 - **A. Módulo enlazado (lo más rápido)**: Gancho sigue como servicio propio; el ERP lo abre en su dominio/subruta detrás del mismo proxy. Si se quiere dentro de un **iframe**, cambiar la CSP `frame-ancestors 'none'` (en `src/web.js`) por el origen del ERP y revisar la cookie (`sameSite`).
 - **B. Inicio de sesión único**: que el ERP mande al usuario ya autenticado (p. ej. token firmado compartido) y Gancho cree/abra su sesión; hoy los usuarios viven en la tabla `usuarios` con rol `admin`/`editor`.

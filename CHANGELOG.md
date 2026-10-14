@@ -1,5 +1,15 @@
 # Cambios de Gancho
 
+## 0.7.0 — 2026-10-14 · Listo para el ERP de Prismaticoos
+- **Videos más largos**: hasta `MAX_VIDEO_GB` (20 GB por defecto). Sin S3 se suben en partes de 64 MB que pasan por Cloudflare (corta peticiones de más de 100 MB) y se reanudan si se corta el internet.
+- **Modo ERP** (`src/erp.js`, todo por variables de entorno):
+  - Inicio de sesión único `GET /sso?t=…` con token firmado por el ERP (un solo uso, ≤ 2 min, solo @prismaticoos.com, el ERP manda el rol).
+  - `ERP_SOLO=1` apaga el login con contraseña (queda el admin de emergencia).
+  - `ERP_ORIGENES` permite mostrar Gancho dentro del ERP.
+  - **Bitácora** (tabla `bitacora` + envío firmado al ERP): entrar, generar, ajustar, rehacer, versiones, lotes, borrar. Vista `GET /api/admin/bitacora`.
+  - `ERP_LIMITE_USD`: más de US$5 de IA de una vez solo lo lanza un administrador.
+- `docs/INTEGRACION-ERP.md`: paso a paso para conectar el ERP (permisos, menú, token, bitácora, Mac mini) y decisiones para Luis.
+
 ## 0.6.2 — 2026-10-13
 - **Paso 3 "¿Para dónde es?" en el formulario**: se marca YouTube, TikTok, Instagram, Facebook, póster o banner de Prisma Plus. Si no se marca YouTube, no se hace la portada de YouTube. El botón dice qué se va a crear y cuánto cuesta ("Crear TikTok · 18 créditos").
 - La pantalla del episodio muestra sus versiones de redes y Prisma Plus directamente (con "+ Más versiones"), y ofrece hacer las de YouTube después si se quieren.

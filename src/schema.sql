@@ -190,3 +190,14 @@ CREATE INDEX IF NOT EXISTS propuestas_task_idx ON propuestas ((imagen->>'taskId'
 -- Se puede pedir solo TikTok/Facebook/Prisma Plus sin hacer antes la portada de YouTube.
 ALTER TABLE formatos ALTER COLUMN propuesta_id DROP NOT NULL;
 CREATE INDEX IF NOT EXISTS formatos_ep_idx ON formatos (episodio_id, creado DESC);
+
+-- Bitácora: quién hizo qué y cuándo (regla del ERP). También se manda al ERP si está configurado.
+CREATE TABLE IF NOT EXISTS bitacora (
+  id      bigserial PRIMARY KEY,
+  cuando  timestamptz NOT NULL DEFAULT now(),
+  usuario text NOT NULL,
+  accion  text NOT NULL,
+  detalle jsonb NOT NULL DEFAULT '{}'::jsonb,
+  ip      text
+);
+CREATE INDEX IF NOT EXISTS bitacora_cuando_idx ON bitacora (cuando DESC);

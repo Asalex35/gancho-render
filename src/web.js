@@ -19,6 +19,7 @@ import * as ia from "./ai/claude.js";
 import { transcripcionDisponible } from "./transcribir.js";
 import * as biblioteca from "./biblioteca.js";
 import { FORMATOS, TIPOS } from "./formatos.js";
+import { erp, entrarConToken, registrar, revisarGasto, USD_POR_IMAGEN, USD_POR_EPISODIO_TEXTO } from "./erp.js";
 import { leerLinks, apiDisponible as youtubeApi, buscar as buscarYouTube, tendencias as tendenciasYouTube } from "./competencia.js";
 import fs from "node:fs";
 import os from "node:os";
@@ -33,7 +34,10 @@ const PUBLIC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../pu
 const ROLES = ["transgresor", "victima", "testigo", "villano", "otro"];
 
 const IDIOMAS = { es: "Español", en: "Inglés", pt: "Portugués" };
-const LIMITE_VIDEO = 5 * 1024 ** 3; // límite de una subida simple a R2/S3
+// Tamaño máximo de un video (configurable). Sin S3 se sube en partes, así pasa por Cloudflare (corta peticiones de más de 100 MB).
+const LIMITE_VIDEO = Number(process.env.MAX_VIDEO_GB || 20) * 1024 ** 3;
+const LIMITE_S3 = 5 * 1024 ** 3; // una subida directa a R2/S3 admite hasta 5 GB
+const PARTE_MAX = 64 * 1024 ** 2;
 
 // Origen de R2/S3 para que el navegador pueda subir videos directo al bucket.
 function origenesSubida() {
@@ -57,11 +61,11 @@ export function crearApp() {
       "Content-Security-Policy": [
         "default-src 'self'", "object-src 'none'", "img-src 'self' data: blob: https:", "style-src 'self' https://fonts.googleapis.com",
         "font-src https://fonts.gstatic.com", "script-src 'self'", `connect-src ${CONNECT}`,
-        "frame-ancestors 'none'", "base-uri 'none'", "form-action 'self'",
+        erp.origenes.length ? `frame-ancestors 'self' ${erp.origenes.join(" ")}` : "frame-ancestors 'none'", "base-uri 'none'", "form-action 'self'",
       ].join("; "),
       "X-Content-Type-Options": "nosniff",
       "Referrer-Policy": "no-referrer",
-      "X-Frame-Options": "DENY",
+      ...(erp.origenes.length ? {} : { "X-Frame-Options": "DENY" }),
       "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     });
     if (config.prod) res.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
@@ -91,10 +95,26 @@ export function crearApp() {
   const limiteCuenta = rateLimit({ windowMs: 15 * 60e3, limit: 10, skipSuccessfulRequests: true, standardHeaders: true, legacyHeaders: false,
     keyGenerator: (req) => `u:${String(req.body?.usuario || "").toLowerCase().trim().slice(0, 40)}`, message: { error: "Demasiados intentos con ese usuario. Espera 15 minutos." } });
   app.post("/api/login", limiteLogin, limiteCuenta, antiCsrf, envolver(async (req, res) => {
+    if (erp.solo && String(req.body?.usuario || "").trim().toLowerCase() !== String(config.admin.user || "").toLowerCase()) {
+      return res.status(403).json({ error: "Gancho se abre desde el ERP de Prismaticoos." });
+    }
     const u = await verificar(req.body?.usuario, req.body?.clave);
     if (!u) return res.status(401).json({ error: "Usuario o contraseña incorrectos." });
     crearSesion(res, u);
+    await registrar({ usuario: u.usuario, ip: req.ip }, "entrar", { metodo: "contraseña" });
     res.json({ ok: true });
+  }));
+  // Inicio de sesión único desde el ERP: /sso?t=<token firmado por el ERP>&volver=/#/ruta
+  app.get("/sso", limiteLogin, envolver(async (req, res) => {
+    try {
+      const u = await entrarConToken(req.query.t);
+      crearSesion(res, u);
+      await registrar({ usuario: u.usuario, ip: req.ip }, "entrar", { metodo: "erp" });
+      const volver = String(req.query.volver || "/");
+      res.redirect(/^\/(#\/[A-Za-z0-9/_-]*)?$/.test(volver) ? volver : "/");
+    } catch (e) {
+      res.status(403).type("text/plain; charset=utf-8").send(`No se pudo entrar a Gancho: ${e.message}`);
+    }
   }));
   app.post("/api/logout", antiCsrf, (req, res) => { cerrarSesion(res); res.json({ ok: true }); });
   app.use("/assets", express.static(path.join(PUBLIC, "assets"), { maxAge: 0, etag: true }));
@@ -115,7 +135,7 @@ export function crearApp() {
     let creditos = null;
     try { creditos = await nb.creditos(); } catch {}
     res.json({
-      usuario: req.usuario, rol: req.user.rol, creditos, uso: await repo.usoHoy(req.usuario),
+      usuario: req.usuario, rol: req.user.rol, creditos, erp: { activo: erp.activo, solo: erp.solo }, usdPorImagen: USD_POR_IMAGEN, uso: await repo.usoHoy(req.usuario),
       limites: config.limits, creditosPorImagen: config.creditsPerImage, refsPublicas: config.refsPublicas,
       canales: (await repo.canales()).filter((c) => c.activo).map((c) => ({ id: c.id, nombre: c.nombre, logo: c.logo_key, idioma: c.idioma, modelo: c.modelo })),
       idiomas: IDIOMAS, transcripcion: transcripcionDisponible(), subidaDirecta: storage.esS3,
@@ -260,6 +280,7 @@ export function crearApp() {
     if (!ep) return res.json({ ok: true });
     puedeBorrar(req, ep.creado_por);
     await borrarEpisodios("e.id = $1", [req.params.id]);
+    await registrar(req, "borrar_episodio", { episodio: req.params.id });
     res.json({ ok: true });
   }));
 
@@ -278,6 +299,7 @@ export function crearApp() {
     let ok = false;
     try { ok = await generar(id, req.usuario, PRIORIDAD.interactiva); } catch (e) { await devolverCupo(req.usuario, 3); throw e; }
     if (!ok) { await devolverCupo(req.usuario, 3); throw publico("No se puede generar ahora: se está procesando, o es un video que hay que reintentar.", 409); }
+    await registrar(req, "generar_propuestas", { episodio: id });
     res.status(202).json({ ok: true });
   }));
 
@@ -352,6 +374,7 @@ export function crearApp() {
       [p.canal, p.episodio_id, req.usuario, p.data.titulo, objetivo, JSON.stringify(razones), comentario]);
     await repo.tocarEpisodio(p.episodio_id);
     await enviar("rehacer", { propuestaId: p.id, objetivo, razones, comentario, usuario: req.usuario, prioridad: PRIORIDAD.interactiva });
+    await registrar(req, "rehacer", { propuesta: p.id, objetivo, razones, comentario });
     res.status(202).json({ ok: true });
   }));
   // Ajustar: la portada gustó pero se le quieren cambios puntuales. Se edita la misma imagen (la anterior queda en "Anteriores").
@@ -374,6 +397,7 @@ export function crearApp() {
       return true;
     });
     if (!ok) { await devolverCupo(req.usuario, 1); throw publico("La portada cambió mientras tanto. Intenta de nuevo.", 409); }
+    await registrar(req, "ajustar", { propuesta: p.id, cambios });
     await repo.tocarEpisodio(p.episodio_id);
     await enviar("imagen", { propuestaId: p.id, usuario: req.usuario, prioridad: PRIORIDAD.interactiva }, { prioridad: PRIORIDAD.interactiva });
     res.status(202).json({ ok: true });
@@ -450,7 +474,9 @@ export function crearApp() {
     const validas = filas.filter((f) => !f.errores.length);
     if (!validas.length) throw publico("No hay filas válidas.");
     if (validas.length > config.limits.maxEpisodesPerBatch) throw publico(`Máximo ${config.limits.maxEpisodesPerBatch} episodios por lote.`);
+    revisarGasto(req, validas.length * (3 * USD_POR_IMAGEN + USD_POR_EPISODIO_TEXTO));
     await reservarCupo(req.usuario, validas.length * 3);
+    await registrar(req, "lote_lanzado", { canal, episodios: validas.length, usd: +(validas.length * (3 * USD_POR_IMAGEN + USD_POR_EPISODIO_TEXTO)).toFixed(2) });
     let lote;
     try { lote = await tx(async (c) => {
       const { rows: [l] } = await c.query("INSERT INTO lotes (nombre, canal, modelo, auto_elegir, creado_por) VALUES ($1,$2,$3,$4,$5) RETURNING *",
@@ -581,40 +607,54 @@ export function crearApp() {
   app.post("/api/auto/subida", envolver(async (req, res) => {
     const ext = String(req.body.nombre || "").split(".").pop().toLowerCase();
     if (!storage.EXT_VIDEO.includes(ext)) throw publico("Sube un video MP4, MOV, WEBM o MKV.");
-    if (Number(req.body.tamano) > LIMITE_VIDEO) throw publico("El video pesa más de 5 GB. Expórtalo más ligero (H.264, 1080p).");
+    const gb = Math.round(LIMITE_VIDEO / 1024 ** 3);
+    if (Number(req.body.tamano) > (storage.esS3 ? LIMITE_S3 : LIMITE_VIDEO)) throw publico(`El video pesa más de ${storage.esS3 ? 5 : gb} GB. Expórtalo más ligero (H.264, 1080p).`);
     await hayCupo(req.usuario, 3);
     const key = storage.nuevaKey("videos", ext);
     if (storage.esS3) return res.json({ key, url: await storage.urlDeSubida(key), tipo: storage.mimeDe(key) });
     // Sin S3: el paso 1b solo acepta la llave que se emitió aquí, para este usuario.
-    res.json({ key, local: true, firma: firmaSubida(key, req.usuario) });
+    res.json({ key, local: true, firma: firmaSubida(key, req.usuario), parte: PARTE_MAX });
   }));
   // 1b) Sin R2/S3: el video llega al servidor como flujo y se guarda en disco.
+  // 1b) Sin S3: el video llega en partes de hasta 64 MB (cabeceras X-Desde = byte inicial y X-Total = tamaño total).
+  // Se pueden reintentar: si una parte se corta, el servidor dice en qué byte va y el navegador continúa desde ahí.
   app.put("/api/auto/subida/:carpeta/:archivo", envolver(async (req, res) => {
     const key = `${req.params.carpeta}/${req.params.archivo}`;
     const ext = req.params.archivo.split(".").pop();
     if (storage.esS3 || req.params.carpeta !== "videos" || !storage.keyValida(key) || !storage.EXT_VIDEO.includes(ext)) throw publico("Subida no válida.");
     const firma = Buffer.from(String(req.get("x-firma") || "")), esperada = Buffer.from(firmaSubida(key, req.usuario));
     if (firma.length !== esperada.length || !crypto.timingSafeEqual(firma, esperada)) throw publico("Subida no válida.", 403);
-    const tamano = Number(req.get("content-length") || 0);
-    if (tamano > LIMITE_VIDEO) throw publico("El video pesa más de 5 GB.", 413);
-    if (subiendoVideo.has(req.usuario)) throw publico("Ya estás subiendo un video; espera a que termine.", 409);
-    const disco = await fs.promises.statfs(config.storage.localDir).catch(() => null);
-    if (disco && disco.bavail * disco.bsize < tamano + 2e9) throw publico("El servidor no tiene espacio para ese video. Avisa al administrador.", 507);
+    const total = Number(req.get("x-total") || req.get("content-length") || 0);
+    const desde = Number(req.get("x-desde") || 0);
+    const largo = Number(req.get("content-length") || 0);
+    if (!(total > 0) || total > LIMITE_VIDEO) throw publico(`El video pesa más de ${Math.round(LIMITE_VIDEO / 1024 ** 3)} GB.`, 413);
+    if (largo > PARTE_MAX || desde + largo > total) throw publico("Subida no válida.", 400);
     if (await storage.existe(key)) throw publico("Ese archivo ya existe.", 409);
-    subiendoVideo.add(req.usuario);
-    res.on("close", () => subiendoVideo.delete(req.usuario));
-    // Temporal en el mismo disco que el destino: el cambio de nombre es instantáneo (sin copiar 5 GB).
-    const tmp = path.join(config.storage.localDir, "videos", `.subida-${crypto.randomBytes(8).toString("hex")}`);
+    // Temporal en el mismo disco que el destino (el cambio de nombre final es instantáneo) y fijo por video para poder continuar.
+    const tmp = path.join(config.storage.localDir, "videos", `.subida-${crypto.createHash("sha256").update(key).digest("hex").slice(0, 24)}`);
+    const actual = (await fs.promises.stat(tmp).catch(() => null))?.size || 0;
+    if (desde !== actual) return res.status(409).json({ error: "La subida se desfasó.", recibido: actual });
+    if (desde === 0) {
+      const otra = subiendoVideo.get(req.usuario);
+      if (otra && otra.key !== key && Date.now() - otra.t < 10 * 60e3) throw publico("Ya estás subiendo un video; espera a que termine.", 409);
+      const disco = await fs.promises.statfs(config.storage.localDir).catch(() => null);
+      if (disco && disco.bavail * disco.bsize < total + 2e9) throw publico("El servidor no tiene espacio para ese video. Avisa al administrador.", 507);
+    }
+    subiendoVideo.set(req.usuario, { key, t: Date.now() }); // se libera solo si pasan 10 min sin recibir partes
     let bytes = 0;
-    req.on("data", (d) => { bytes += d.length; if (bytes > LIMITE_VIDEO) req.destroy(new Error("demasiado grande")); });
+    req.on("data", (d) => { bytes += d.length; if (bytes > PARTE_MAX) req.destroy(new Error("parte demasiado grande")); });
     try {
-      await pipeline(req, fs.createWriteStream(tmp, { flags: "wx" }));
-      await storage.guardarDesdeArchivo(key, tmp);
+      await pipeline(req, fs.createWriteStream(tmp, { flags: desde === 0 ? "w" : "a" }));
     } catch (e) {
-      await fs.promises.rm(tmp, { force: true });
+      // La parte incompleta se recorta para que el reintento continúe en el byte correcto.
+      await fs.promises.truncate(tmp, desde).catch(() => {});
       throw publico(e.code === "ENOSPC" ? "El servidor se quedó sin espacio." : "Se cortó la subida del video.", 400);
     }
-    res.json({ ok: true, bytes });
+    const recibido = desde + bytes;
+    if (recibido < total) return res.json({ ok: true, recibido });
+    await storage.guardarDesdeArchivo(key, tmp);
+    subiendoVideo.delete(req.usuario);
+    res.json({ ok: true, recibido, listo: true });
   }));
   // 2) Crea el episodio y lo manda a la cola.
   app.post("/api/auto/episodios", envolver(async (req, res) => {
@@ -671,6 +711,7 @@ export function crearApp() {
       const f = await one("INSERT INTO formatos (propuesta_id, episodio_id, tipo, creado_por) VALUES ($1,$2,$3,$4) RETURNING id", [p.id, p.episodio_id, tipo, req.usuario]);
       await enviar("formato", { formatoId: f.id, usuario: req.usuario }, { prioridad: PRIORIDAD.interactiva });
     }
+    await registrar(req, "crear_versiones", { tipos, usd: +(tipos.length * USD_POR_IMAGEN).toFixed(2) });
     res.status(202).json({ ok: true });
   }));
   // Solo redes o Prisma Plus, sin portada de YouTube (o de todo el episodio).
@@ -691,6 +732,7 @@ export function crearApp() {
       const f = await one("INSERT INTO formatos (propuesta_id, episodio_id, tipo, creado_por) VALUES ($1,$2,$3,$4) RETURNING id", [null, ep.id, tipo, req.usuario]);
       await enviar("formato", { formatoId: f.id, usuario: req.usuario }, { prioridad: PRIORIDAD.interactiva });
     }
+    await registrar(req, "crear_versiones", { tipos, usd: +(tipos.length * USD_POR_IMAGEN).toFixed(2) });
     res.status(202).json({ ok: true });
   }));
   app.get("/api/formatos/:id/descargar", envolver(async (req, res) => {
@@ -828,6 +870,9 @@ export function crearApp() {
       FROM pgboss.job WHERE name = 'formato' AND data->>'formatoId' = $1 ORDER BY created_on DESC LIMIT 10`, [id]).catch((e) => [{ error: e.message }]);
     res.json({ formato: f && { ...f, imagen: { ...f.imagen, taskId: f.imagen?.taskId ? "sí" : "no" } }, trabajos });
   }));
+  app.get("/api/admin/bitacora", soloAdmin, envolver(async (req, res) => {
+    res.json(await all("SELECT usuario, accion, detalle, cuando FROM bitacora ORDER BY cuando DESC LIMIT 300"));
+  }));
   app.get("/api/admin/uso", soloAdmin, envolver(async (req, res) => {
     const dias = await all(`SELECT dia::text, usuario, imagenes, textos FROM uso WHERE dia > current_date - 14 ORDER BY dia DESC, imagenes DESC`);
     const estados = await all(`SELECT imagen->>'estado' AS estado, count(*)::int AS n FROM propuestas WHERE NOT archivada AND creado > now() - interval '2 days' GROUP BY 1`);
@@ -881,7 +926,7 @@ function archivoSeguro(s) { return String(s || "portada").normalize("NFD").repla
 // Reserva atómica del cupo diario: dos lotes simultáneos no pueden pasarse del límite.
 // Solo el administrador puede pedir ver lo de todo el equipo (?todos=1).
 const verTodo = (req) => req.user?.rol === "admin" && req.query.todos === "1";
-const subiendoVideo = new Set();
+const subiendoVideo = new Map(); // usuario → video que está subiendo (una subida a la vez por persona)
 function firmaSubida(key, usuario) {
   return crypto.createHmac("sha256", config.sessionSecret).update(`subida|${key}|${usuario}`).digest("base64url");
 }

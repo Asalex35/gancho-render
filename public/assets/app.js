@@ -1083,6 +1083,34 @@ function pasosVideo(etapa) {
 }
 
 let subiendo = null;
+// Sube un video al servidor en partes de 64 MB (pasa por Cloudflare y aguanta cortes de internet): si una parte falla,
+// el servidor dice en qué byte va y se continúa desde ahí; hasta 6 fallos seguidos antes de rendirse.
+async function subirEnPartes(f, r, barraEl) {
+  const tam = r.parte || 64 * 1024 * 1024;
+  let desde = 0, fallos = 0;
+  while (desde < f.size) {
+    const pedazo = f.slice(desde, Math.min(f.size, desde + tam));
+    const resp = await new Promise((resolver) => {
+      const x = new XMLHttpRequest();
+      x.open("PUT", `/api/auto/subida/${r.key}`);
+      x.setRequestHeader("X-Gancho", "1"); x.setRequestHeader("X-Firma", r.firma);
+      x.setRequestHeader("X-Desde", String(desde)); x.setRequestHeader("X-Total", String(f.size));
+      x.upload.onprogress = (e) => { if (e.lengthComputable) barraEl.style.width = `${((desde + e.loaded) / f.size) * 100}%`; };
+      x.onload = () => {
+        let d = {}; try { d = JSON.parse(x.responseText); } catch {}
+        if (x.status < 300 || (x.status === 409 && typeof d.recibido === "number")) return resolver({ recibido: d.recibido });
+        if (x.status >= 400 && x.status < 500) return resolver({ error: d.error || "No se pudo subir el video." });
+        resolver(null);
+      };
+      x.onerror = () => resolver(null);
+      x.send(pedazo);
+    });
+    if (resp?.error) throw new Error(resp.error);
+    if (typeof resp?.recibido === "number") { desde = resp.recibido; fallos = 0; continue; }
+    if (++fallos > 6) throw new Error("Se cortó la subida varias veces. Revisa tu conexión e inténtalo otra vez.");
+    await new Promise((ok) => setTimeout(ok, 1500 * fallos));
+  }
+}
 // Cerrar o recargar la pestaña mataría una subida de varios GB.
 window.addEventListener("beforeunload", (e) => { if (subiendo) { e.preventDefault(); e.returnValue = ""; } });
 // Los subtítulos elegidos viven fuera de la vista: el refresco de la lista no los borra.
@@ -1123,15 +1151,17 @@ async function vistaAuto() {
       progreso.replaceChildren(h("span", {}, `Subiendo ${n + 1} de ${files.length}: ${f.name}`), h("div", { class: "barra-subida" }, barraEl));
       try {
         const r = await api("/api/auto/subida", { method: "POST", body: { nombre: f.name, tamano: f.size } });
-        await new Promise((resolver, rechazar) => {
-          const x = new XMLHttpRequest();
-          if (r.url) { x.open("PUT", r.url); x.setRequestHeader("Content-Type", r.tipo); }
-          else { x.open("PUT", `/api/auto/subida/${r.key}`); x.setRequestHeader("X-Gancho", "1"); x.setRequestHeader("X-Firma", r.firma); }
-          x.upload.onprogress = (e) => { if (e.lengthComputable) barraEl.style.width = `${(e.loaded / e.total) * 100}%`; };
-          x.onload = () => (x.status < 300 ? resolver() : rechazar(new Error(r.url ? "El almacenamiento rechazó el video. Revisa el CORS del bucket." : "No se pudo subir el video.")));
-          x.onerror = () => rechazar(new Error("Se cortó la subida. Revisa tu conexión."));
-          x.send(f);
-        });
+        if (r.url) {
+          // R2/S3: una sola subida directa al almacenamiento.
+          await new Promise((resolver, rechazar) => {
+            const x = new XMLHttpRequest();
+            x.open("PUT", r.url); x.setRequestHeader("Content-Type", r.tipo);
+            x.upload.onprogress = (e) => { if (e.lengthComputable) barraEl.style.width = `${(e.loaded / e.total) * 100}%`; };
+            x.onload = () => (x.status < 300 ? resolver() : rechazar(new Error("El almacenamiento rechazó el video. Avisa al administrador.")));
+            x.onerror = () => rechazar(new Error("Se cortó la subida. Revisa tu conexión."));
+            x.send(f);
+          });
+        } else await subirEnPartes(f, r, barraEl);
         await api("/api/auto/episodios", { method: "POST", body: { canal: st.canal, key: r.key, nombreArchivo: f.name, notas: st.notas, subtitulos: files.length === 1 ? subAuto.texto : null,
           hack: Boolean(st.hack), episodios: st.episodios || 3, finPrimero: files.length === 1 ? finPrimero.value.trim() : "" } });
         ok++;
@@ -1147,7 +1177,7 @@ async function vistaAuto() {
   const zona = h("div", { class: "subir", tabindex: "0", role: "button", onclick: () => input.click(),
     onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } } },
     h("b", {}, "Suelta aquí el video final del episodio"),
-    h("span", { class: "muted" }, "Puedes soltar varios. MP4, MOV, WEBM o MKV · hasta 5 GB cada uno"), progreso);
+    h("span", { class: "muted" }, "Puedes soltar varios. MP4, MOV, WEBM o MKV · videos largos y hacks incluidos (hasta 20 GB)"), progreso);
   zona.addEventListener("dragover", (e) => { e.preventDefault(); zona.classList.add("on"); });
   zona.addEventListener("dragleave", () => zona.classList.remove("on"));
   zona.addEventListener("drop", (e) => { e.preventDefault(); zona.classList.remove("on"); subir([...e.dataTransfer.files]); });
