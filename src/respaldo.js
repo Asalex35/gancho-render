@@ -1,4 +1,4 @@
-// Respaldo completo para mudar Gancho de servidor (Render → ERP): tablas en JSON + archivos (sin videos originales),
+// Respaldo completo para mudar Gancho de servidor: tablas en JSON + archivos (sin videos originales),
 // en un .tar.gz. Lo baja el administrador en Administración › Respaldo y Luis lo carga en el servidor nuevo con
 // `npm run importar -- respaldo.tar.gz`. Formato tar «ustar» simple, sin dependencias.
 import zlib from "node:zlib";

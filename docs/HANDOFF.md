@@ -2,7 +2,9 @@
 
 > Para el equipo o el asistente que va a llevar Gancho al **ERP de Prismáticoos** y correrlo en la **Mac mini**.
 > Estado al 14 oct 2026 · versión **v0.8.0** · repo privado `github.com/Asalex35/gancho` (rama `main`, etiquetas `v0.1.0`…`v0.6.2`, historial en `CHANGELOG.md`).
-> Este documento no contiene llaves ni contraseñas: viven en `.env` (local) y en el panel de Render.
+> Este documento no contiene llaves ni contraseñas: viven en `.env` (local) y en `/etc/gancho/gancho.env` del servidor.
+>
+> **Actualización 2026-10-14 (v1.0.0):** Gancho va a producción en el ERP de Prismaticoos (Prisma Studio › Kit de publicación). La guía vigente es [`deploy/erp/README.md`](../deploy/erp/README.md); Render queda solo hasta mudar los datos.
 
 ---
 
@@ -103,7 +105,7 @@ Historial **por perfil**: cada usuario ve solo lo suyo; el admin tiene el interr
 3. `DATA_DIR` en un disco con espacio (videos 4K se borran solos a los `VIDEO_RETENTION_DAYS`).
 4. **Punto crítico — URL pública**: Nano Banana descarga las fotos de los actores desde `PUBLIC_BASE_URL/pub/...` (enlaces firmados que caducan en 2 h) y manda su aviso a `/api/nb-callback/...`. Si la Mac mini no es accesible desde internet, **las portadas no se parecerán a los actores**. Opciones: **Cloudflare Tunnel con nombre fijo** (recomendado; un túnel temporal `trycloudflare` cambia de URL en cada arranque), o guardar las imágenes en **S3/R2** (entonces las fotos salen por URL firmada del bucket).
 5. Mantenerlo vivo: `launchd` (o pm2) con reinicio automático; que la Mac no se duerma (`caffeinate` / Ajustes de energía). El arranque hace las migraciones solo.
-6. **Migrar datos de Render** (si se quieren conservar): `pg_dump` de la base de Render → `pg_restore` local, y copiar el disco `/var/data` (portadas, actores, rostros, formatos) a `DATA_DIR`. Después apagar el servicio de Render para no pagar doble (~$36 USD/mes).
+6. **Migrar datos de Render**: Administración › Descargar respaldo y `npm run importar -- archivo --renombrar viejo=nuevo` en el servidor nuevo (ver `deploy/erp/README.md` §9). Después apagar Render (~$36 USD/mes).
 7. Respaldos diarios: `pg_dump` + copia de `DATA_DIR`.
 
 ## 7. Integración con el ERP — ver `docs/INTEGRACION-ERP.md` (paso a paso para el Claude de la Mac mini)
@@ -117,7 +119,7 @@ Resumen de opciones:
 
 ## 8. Dónde está hoy
 
-- Producción actual: **Render** → `https://gancho-p4ns.onrender.com` (servicio "gancho" Standard + Postgres basic-256mb + disco 20 GB, Blueprint `render.yaml`; la base no acepta conexiones externas). Cada push a `main` se publica solo.
+- Producción: **ERP de Prismaticoos** (`portadas.erp-prismaticoos.com`, lo instala Luis con `deploy/erp/`). Mientras tanto sigue en Render (`https://gancho-p4ns.onrender.com`) solo para no dejar al equipo sin herramienta; se apaga al mudar los datos.
 - Usuarios activos: carlos (admin), anapau, enrique.
 - Créditos Nano Banana al cierre: ~150 (≈ 8 imágenes) → **recargar**.
 

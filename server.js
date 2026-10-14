@@ -11,7 +11,7 @@ import { crearApp } from "./src/web.js";
 
 // Un error suelto nunca debe tumbar el proceso (la web y los workers comparten proceso con ROLE=all).
 process.on("unhandledRejection", (e) => console.error("Promesa sin manejar:", e));
-process.on("uncaughtException", (e) => { console.error("Excepción sin manejar:", e); process.exit(1); }); // Render reinicia el proceso
+process.on("uncaughtException", (e) => { console.error("Excepción sin manejar:", e); process.exit(1); }); // systemd reinicia el proceso
 
 await migrar();
 await sembrarCanales();
@@ -26,7 +26,7 @@ if (config.role === "all" || config.role === "web") {
     if (!config.refsPublicas) console.log("ℹ️  Modo local: Nano Banana no puede ver las fotos del cast (usa S3/R2 o publica la app).");
   });
 }
-// Subidas de video largas: sin tope total por petición (Render corta conexiones inactivas por su cuenta).
+// Subidas de video largas: sin tope total por petición (nginx corta conexiones inactivas por su cuenta).
 if (server) { server.requestTimeout = 6 * 3600e3; server.headersTimeout = 65000; server.keepAliveTimeout = 61000; }
 if (config.role === "all" || config.role === "worker") await iniciarWorkers();
 

@@ -48,6 +48,22 @@ function origenesSubida() {
   return ` ${u.origin} https://*.${u.host}`;
 }
 
+// Nombre visible: en el ERP es «Kit de publicación» dentro de «Prisma Studio» (APP_NOMBRE / APP_SUBTITULO).
+const escHtml = (t) => String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const NOMBRE_APP = process.env.APP_NOMBRE || "Gancho";
+const SUB_APP = process.env.APP_SUBTITULO || "by Prismáticoos";
+const paginas = new Map();
+function pagina(archivo) {
+  if (!paginas.has(archivo) || !config.prod) {
+    const html = fs.readFileSync(path.join(PUBLIC, archivo), "utf8")
+      .replace("<title>Gancho · Prismáticoos</title>", `<title>${escHtml(NOMBRE_APP)} · ${escHtml(SUB_APP.replace(/^by\s+/, ""))}</title>`)
+      .replace("<b>Gancho</b><small>by Prismáticoos</small>", `<b>${escHtml(NOMBRE_APP)}</b><small>${escHtml(SUB_APP)}</small>`);
+    paginas.set(archivo, html);
+  }
+  return paginas.get(archivo);
+}
+const enviarPagina = (res, archivo) => res.type("html").set("Cache-Control", "no-cache").send(pagina(archivo));
+
 export function crearApp() {
   const app = express();
   // /api/Episodios/:id no debe saltarse la revisión de dueño (Express ignora mayúsculas por defecto).
@@ -95,7 +111,7 @@ export function crearApp() {
 
   // ---------- Login ----------
   const limiteLogin = rateLimit({ windowMs: 15 * 60e3, limit: 10, standardHeaders: true, legacyHeaders: false, message: { error: "Demasiados intentos. Espera 15 minutos." } });
-  app.get("/login", envolver(async (req, res) => ((await usuarioDe(req)) ? res.redirect("/") : res.sendFile(path.join(PUBLIC, "login.html")))));
+  app.get("/login", envolver(async (req, res) => ((await usuarioDe(req)) ? res.redirect("/") : enviarPagina(res, "login.html"))));
   const limiteCuenta = rateLimit({ windowMs: 15 * 60e3, limit: 10, skipSuccessfulRequests: true, standardHeaders: true, legacyHeaders: false,
     keyGenerator: (req) => `u:${String(req.body?.usuario || "").toLowerCase().trim().slice(0, 40)}`, message: { error: "Demasiados intentos con ese usuario. Espera 15 minutos." } });
   app.post("/api/login", limiteLogin, limiteCuenta, antiCsrf, envolver(async (req, res) => {
@@ -133,7 +149,7 @@ export function crearApp() {
   });
   app.use("/api", rateLimit({ windowMs: 60e3, limit: 300, standardHeaders: true, legacyHeaders: false, keyGenerator: (req) => req.user.id }));
 
-  app.get("/", (req, res) => res.sendFile(path.join(PUBLIC, "index.html")));
+  app.get("/", (req, res) => enviarPagina(res, "index.html"));
   app.get("/media/:carpeta/:archivo", envolver(async (req, res) => {
     const key = `${req.params.carpeta}/${req.params.archivo}`;
     if (!storage.keyValida(key)) return res.sendStatus(404);

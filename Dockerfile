@@ -1,4 +1,4 @@
-# Gancho en contenedor: el mismo programa en la Mac mini, DigitalOcean, Render u otra nube.
+# Gancho en contenedor (opcional). En el ERP corre con systemd: ver deploy/erp/README.md.
 # ffmpeg y los modelos de caras vienen incluidos (ffmpeg-static y modelos/).
 FROM node:22-bookworm-slim
 WORKDIR /app

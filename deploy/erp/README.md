@@ -1,13 +1,12 @@
-# Gancho en el servidor del ERP · guía de instalación para Luis
+# Kit de publicación (Gancho) en el servidor del ERP · guía de instalación para Luis
 
 Gancho hace portadas, títulos, descripciones y tags (YouTube, TikTok, Instagram, Facebook y Prisma Plus) a partir del
-video o la sinopsis de un episodio, con las caras reales de los actores. En el ERP aparece como **Social Media ›
-Portadas**: el módulo `portadas` del ERP (rama `carlitos/portadas`) da el permiso, el botón «Abrir Portadas» y la
-bitácora; Gancho corre como un servicio aparte en el mismo servidor, en su propio subdominio y detrás del mismo
+video o la sinopsis de un episodio, con las caras reales de los actores. En el ERP aparece en un apartado nuevo, **Prisma Studio › Kit de publicación**: el módulo `portadas` del ERP (rama
+`carlitos/portadas`) da el espacio del menú, el permiso, el botón «Abrir Kit de publicación» y la bitácora; Gancho corre como un servicio aparte en el mismo servidor, en su propio subdominio y detrás del mismo
 Cloudflare Access.
 
 ```
-ERP (sistema.erp-prismaticoos.com) ── «Abrir Portadas» ──> token de un solo uso (HMAC, ≤ 2 min, @prismaticoos.com)
+ERP (sistema.erp-prismaticoos.com) ── «Abrir Kit de publicación» ──> token de un solo uso (HMAC, ≤ 2 min, @prismaticoos.com)
                                                                │
 navegador ──HTTPS──> Cloudflare (Access: correo + código) ──túnel──> nginx 127.0.0.1:8082 ──> Gancho 127.0.0.1:8090
                                                                                               ├─> PostgreSQL: base «gancho» (propia)
@@ -27,7 +26,7 @@ Tiempo estimado: 1 a 2 horas. Lo que se probó antes de entregar está en «12. 
 | 2 | **Puerta de IA** | Gancho es un sistema aparte: llama a Claude, Google, ElevenLabs y YouTube con sus propias llaves (en `/etc/gancho/gancho.env`, solo Luis las pega). | Aceptarlo así en esta fase. Cada acción queda en la bitácora del ERP; topes: `ERP_LIMITE_USD=5` por trabajo y límite diario de portadas por persona y por equipo. Más adelante se puede pasar por `pedirTrabajo`. |
 | 3 | **Base de datos** | Base y usuario **propios** (`gancho`) en el mismo clúster `erp-db-produccion`. No toca tablas del ERP. | Así. |
 | 4 | **Archivos** | DigitalOcean Spaces, bucket `prismaticoos-gancho-prod` (videos de hasta 30 GB que se borran solos a los 3 días). | Spaces. En disco local un video de 30 GB no cabe con holgura. |
-| 5 | **Quién entra** | Solo desde el ERP (`ERP_SOLO=1`), con `Portadas` › crear. `Portadas` › aprobar = administrador de Gancho. | Darlo a Social Media / Marketing. |
+| 5 | **Quién entra** | Solo desde el ERP (`ERP_SOLO=1`), con `Kit de publicación` › crear. › aprobar = administrador. | Darlo a Social Media / Marketing. |
 
 ---
 
@@ -136,11 +135,12 @@ Usa el `map $ip_visitante` que ya tiene el `nginx.conf` del ERP. Escucha solo en
 
 ## 8. ERP
 
-1. Integra la rama `carlitos/portadas` (módulo `portadas`: permiso, menú, `POST /api/portadas/entrar` y
-   `POST /api/portadas/bitacora`; su `docs/portadas/README.md` lo explica).
+1. Integra la rama `carlitos/portadas` (módulo `portadas`: espacio «Prisma Studio» en el menú —commit de núcleo aparte
+   para tu visto bueno—, permiso «Kit de publicación», `POST /api/portadas/entrar` y `POST /api/portadas/bitacora`; su
+   `docs/portadas/README.md` lo explica). Copia de los parches en `deploy/erp/modulo-erp/`.
 2. En `/etc/erp/erp.env`: `GANCHO_URL=https://portadas.erp-prismaticoos.com`, `GANCHO_SSO_SECRET`, `GANCHO_BITACORA_SECRET`;
-   reinicia `erp-api`. Sin esas variables la pantalla dice «Portadas aún no está conectado».
-3. Usuarios y roles → `Portadas` › crear para quien hace portadas, › aprobar para quien lo administra.
+   reinicia `erp-api`. Sin esas variables la pantalla dice que el Kit de publicación aún no está conectado.
+3. Usuarios y roles → `Kit de publicación` › crear para quien hace portadas, › aprobar para quien lo administra.
 
 ## 9. Mudar los datos que hoy están en Render
 
@@ -200,14 +200,14 @@ imagen, Nano Banana, ElevenLabs, YouTube). Contesta con ✅ / ⚠️ / ❌ en es
 
 Prueba de punta a punta (≈ US$0.50):
 
-1. ERP › Social Media › Portadas › **Abrir Portadas** → entra a Gancho ya con sesión.
+1. ERP › Prisma Studio › Kit de publicación › **Abrir** → entra ya con sesión; arriba dice «Kit de publicación · Prisma Studio».
 2. Abre `https://portadas.erp-prismaticoos.com/login` en una ventana privada → Cloudflare pide el correo y, ya dentro,
    el login con contraseña está apagado (`ERP_SOLO=1`).
 3. **Manual**: sinopsis corta + 1 actor con foto → 3 portadas y títulos en ~1 min, con solo ese actor en la imagen.
 4. Elegir una → «Cómo se ve en YouTube» (computadora, TV y celular entre portadas reales) → Descargar.
 5. **Video**: subir un MP4 corto → detecta caras, crea el perfil del actor, transcribe y propone.
-6. Bitácora del ERP → «Abrió Portadas», «Entrada en Gancho», «Portadas generadas».
-7. Administración de Gancho (con `Portadas` › aprobar) → gasto del día, Almacenamiento y Bitácora.
+6. Bitácora del ERP → la apertura, la entrada y las portadas generadas.
+7. Administración (con `Kit de publicación` › aprobar) → gasto del día, Almacenamiento y Bitácora.
 
 Probado en local antes de entregar: la revisión completa; el respaldo (exportar → importar en una base vacía con
 renombre de usuarios, y que se niegue a importar dos veces); el pase de Cloudflare (válido entra; de otra aplicación, otra

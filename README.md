@@ -18,7 +18,7 @@ Imágenes: disco local o Cloudflare R2 / S3
 ```
 - Cada paso es un trabajo con reintentos. Si Claude o Nano Banana se saturan, reintenta solo.
 - Lo que se pide desde la pantalla de un episodio va antes que los lotes (prioridad).
-- Para ir más rápido: sube `IMAGE_CONCURRENCY` o agrega más workers en Render.
+- Para ir más rápido: sube `IMAGE_CONCURRENCY` o corre otro proceso con `ROLE=worker` (con Spaces).
 
 ## Tres formas de trabajar
 1. **Automático:** subes el video final y Gancho saca cuadros, transcribe, entiende la historia, toma las caras del propio video,
@@ -51,17 +51,11 @@ npm start                     # http://localhost:3000
 NANOBANANA_MOCK=1 npm start   # imágenes falsas, no gasta créditos
 ```
 
-## Publicar en Render
-1. Sube el repo a GitHub (privado). El `.env` no se sube.
-2. Crea un bucket en Cloudflare R2 y una API key con permiso de lectura y escritura.
-3. Render → **New → Blueprint** → elige el repo (`render.yaml` crea web, worker y Postgres).
-4. Llena las variables marcadas: keys de Claude y Nano Banana, `ADMIN_USER`, `ADMIN_PASSWORD`, `PUBLIC_BASE_URL` y las de R2.
-5. En el bucket de R2 → **Settings → CORS**: permite `PUT` desde tu dominio (para subir videos directo al bucket).
-6. `ELEVENLABS_API_KEY` para transcribir (máx. 40 min por episodio) y saber quién habla; con eso el detector de caras
-   (local, gratis, revisa ≈5 min del video) recorta la cara y el medio cuerpo de cada personaje. Respaldo opcional: `TRANSCRIBE_API_KEY` (Groq/OpenAI).
-7. **Settings → Custom Domain** en `gancho-web` y crea el CNAME que te indique Render.
-
-Más barato para empezar: un solo servicio web con `ROLE=all` + Postgres (sin R2, con disco persistente en `DATA_DIR`).
+## Producción: ERP de Prismaticoos
+Gancho vive en los servidores del ERP (Prisma Studio › Kit de publicación), detrás de Cloudflare Tunnel y Access, con su
+propia base en el clúster del ERP y archivos en DigitalOcean Spaces. Lo instala Luis siguiendo
+[`deploy/erp/README.md`](deploy/erp/README.md); `npm run verificar` revisa la instalación y `deploy/erp/desplegar.sh`
+actualiza (y regresa solo a la versión anterior si algo falla).
 
 ## Seguridad
 - Las API keys solo viven en el servidor.

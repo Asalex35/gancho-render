@@ -17,7 +17,7 @@ function requerido(k) {
 export const config = {
   prod: PROD,
   port: PORT,
-  // En los servidores del ERP: 127.0.0.1 (solo nginx/cloudflared llegan). En Render/Docker: 0.0.0.0.
+  // En los servidores del ERP: 127.0.0.1 (solo nginx/cloudflared llegan). En un contenedor: 0.0.0.0.
   host: env.HOST || "0.0.0.0",
   // web = solo interfaz y API · worker = solo procesa la cola · all = las dos cosas (lo más simple)
   role: env.ROLE || "all",
@@ -75,7 +75,7 @@ if (config.role !== "all" && config.storage.driver === "local" && config.prod) {
 }
 
 // TLS de Postgres. Socket local o localhost: sin TLS. Base administrada (DigitalOcean): con su certificado y verificando
-// el nombre (verify-full) si se da DATABASE_SSL_CA o sslrootcert en la URL; si no, cifrado sin verificar (Render).
+// el nombre (verify-full) si se da DATABASE_SSL_CA o sslrootcert en la URL; si no, cifrado sin verificar.
 export function sslDe(url = config.databaseUrl) {
   let u = null;
   try { u = new URL(url); } catch {}

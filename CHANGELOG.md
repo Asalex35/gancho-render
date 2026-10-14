@@ -1,5 +1,10 @@
 # Cambios de Gancho
 
+## 1.1.0 — 2026-10-14 · Prisma Studio › Kit de publicación
+- En el ERP la herramienta se llama **Kit de publicación** y vive en el apartado nuevo **Prisma Studio** (`APP_NOMBRE`, `APP_SUBTITULO`; el servidor pone el nombre en la página, sin parpadeo). Fuera del ERP sigue diciendo «Gancho».
+- Los textos ya no hablan de «Gancho» como persona: dicen «la IA» («Que la IA decida», «La IA está viendo el episodio»).
+- Render fuera del repo: se quitaron `render.yaml` y `render.escalado.yaml`; la única instalación de producción es la del ERP (`deploy/erp/`).
+
 ## 1.0.0 — 2026-10-14 · Lista para producción en el ERP de Prismaticoos
 - **Instalación en el servidor del ERP** (`deploy/erp/`): guía paso a paso para Luis, servicio systemd endurecido, nginx solo en `127.0.0.1`, ruta del túnel de Cloudflare, variables sin comentarios en línea, CORS y ciclo de vida de Spaces, y `desplegar.sh` (actualiza, revisa y solo entonces reinicia).
 - **Cloudflare Access verificado por Gancho** (`CF_ACCESS_TEAM`, `CF_ACCESS_AUD`): sin el pase firmado no se entra; el correo de Access debe ser el mismo del token del ERP y la sesión se cierra si cambia la persona.

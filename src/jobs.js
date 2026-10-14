@@ -1,6 +1,6 @@
 // Cola de trabajos en Postgres (pg-boss). Cada paso del flujo es un trabajo independiente:
 // así se pueden procesar cientos de episodios a la vez, con reintentos y límites de concurrencia,
-// y se puede escalar agregando más "workers" en Render.
+// y se puede escalar con más procesos ROLE=worker.
 //
 // Reglas para que nada se quede pegado:
 // - Cada trabajo "reclama" su registro con un UPDATE condicional antes de gastar (no hay cobros dobles).

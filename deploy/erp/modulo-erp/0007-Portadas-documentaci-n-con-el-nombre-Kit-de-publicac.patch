@@ -1,0 +1,88 @@
+From 001f3d60baf9e7f9ff8a6001d2243b63b2f0465a Mon Sep 17 00:00:00 2001
+From: "Carlitos Alexander (Carlos Ortiz)" <carlos.ortiz@prismaticoos.com>
+Date: Wed, 14 Oct 2026 17:56:03 -0600
+Subject: [PATCH 7/7] =?UTF-8?q?Portadas:=20documentaci=C3=B3n=20con=20el?=
+ =?UTF-8?q?=20nombre=20Kit=20de=20publicaci=C3=B3n=20y=20el=20espacio=20Pr?=
+ =?UTF-8?q?isma=20Studio?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ docs/portadas/README.md | 30 ++++++++++++++++++++----------
+ 1 file changed, 20 insertions(+), 10 deletions(-)
+
+diff --git a/docs/portadas/README.md b/docs/portadas/README.md
+index 7dc9550..1b96aef 100644
+--- a/docs/portadas/README.md
++++ b/docs/portadas/README.md
+@@ -1,7 +1,7 @@
+-# Portadas (Gancho)
++# Kit de publicación (Prisma Studio)
+ 
+-**Social Media › Portadas** es un puente pequeño hacia **Gancho**, la herramienta de portadas, títulos y descripciones
+-para YouTube, TikTok, Instagram, Facebook y Prisma Plus. Gancho vive aparte, en su propio subdominio (p. ej.
++**Prisma Studio › Kit de publicación** es un puente pequeño hacia **Gancho**, la herramienta de portadas, títulos y
++descripciones para YouTube, TikTok, Instagram, Facebook y Prisma Plus. Gancho vive aparte, en su propio subdominio (p. ej.
+ `https://portadas.erp-prismaticoos.com`), en los servidores de Luis. El ERP no guarda portadas ni tiene tablas propias
+ para esto: solo
+ 
+@@ -10,13 +10,19 @@ para esto: solo
+ 
+ Código: `server/src/modules/portadas/` (API) y `src/modules/portadas/` (pantalla). Pruebas: `server/test/portadas.test.ts`.
+ 
+-## Permisos (Usuarios y roles › «Portadas (Gancho)»)
++**Nombres técnicos.** De cara al equipo se llama «Kit de publicación» y vive en el espacio **Prisma Studio** del menú
++(donde irán más herramientas). Las claves técnicas siguen siendo `portadas`: módulo, nodo de permisos, bitácora
++(`portadas.*`), rutas `/api/portadas/*` y la pantalla `/portadas`. Así no cambia nada de la integración ya probada con
++Gancho (`ERP_BITACORA_URL`) ni los roles que ya den el nodo. Si se quisieran renombrar (p. ej. a `kit-publicacion`),
++conviene hacerlo antes de ponerlo en producción: la bitácora y los roles guardan la clave.
++
++## Permisos (Usuarios y roles › «Kit de publicación»)
+ 
+ | Acción  | Qué permite |
+ |---------|-------------|
+-| Ver     | Ver la pantalla Social Media › Portadas. |
++| Ver     | Ver la pantalla Prisma Studio › Kit de publicación. |
+ | Crear   | Generar portadas, títulos y versiones (abrir Gancho como **editor**). |
+-| Aprobar | Administrar Gancho: ver lo de todo el equipo y lanzar trabajos de más de US$5 (entra como **admin**). |
++| Aprobar | Administrar el Kit de publicación: ver lo de todo el equipo y lanzar trabajos de más de US$5 (entra como **admin**). |
+ 
+ El superadministrador entra siempre como admin.
+ 
+@@ -28,8 +34,8 @@ El superadministrador entra siempre como admin.
+ | `GANCHO_SSO_SECRET` | Llave compartida del inicio único. Al menos 32 caracteres (p. ej. `openssl rand -hex 32`). |
+ | `GANCHO_BITACORA_SECRET` | Llave con la que Gancho firma la bitácora. Al menos 32 caracteres y **distinta** de la anterior. |
+ 
+-- Sin `GANCHO_URL` o `GANCHO_SSO_SECRET` (o con una llave de menos de 32 caracteres), Portadas sigue encendido pero
+-  responde **503 «Portadas aún no está conectado en este servidor. Pídeselo a Luis.»** y la pantalla lo muestra así.
++- Sin `GANCHO_URL` o `GANCHO_SSO_SECRET` (o con una llave de menos de 32 caracteres), el módulo sigue encendido pero
++  responde **503 «El Kit de publicación aún no está conectado en este servidor. Pídeselo a Luis.»** y la pantalla lo muestra así.
+   Por eso el módulo **no** está en `apagadosFueraDeLocal`.
+ - Sin `GANCHO_BITACORA_SECRET`, `POST /api/portadas/bitacora` responde 503 (Gancho sigue funcionando; solo no llega su
+   bitácora al ERP).
+@@ -51,10 +57,10 @@ canal seguro; nunca en git, en el chat ni en capturas.
+ 
+ ## Cómo funciona
+ 
+-### `GET /api/portadas/estado` (Portadas › Ver)
++### `GET /api/portadas/estado` (Kit de publicación › Ver)
+ `{ conectado: boolean, url?: string }`.
+ 
+-### `POST /api/portadas/entrar` (Portadas › Crear; 20 por minuto)
++### `POST /api/portadas/entrar` (Kit de publicación › Crear; 20 por minuto)
+ Responde `{ url }` = `${GANCHO_URL}/sso?t=<token>`. El token es exactamente el que Gancho verifica:
+ 
+ ```
+@@ -110,3 +116,7 @@ Lo llama el servidor de Gancho con el cuerpo JSON
+ 5. Poner las tres variables en `erp.env` de pruebas y producción, y las de Gancho (`ERP_SSO_SECRET`,
+    `ERP_BITACORA_SECRET`, `ERP_BITACORA_URL`) en su servidor. Opcional en Gancho: `ERP_SOLO=1` (solo se entra desde el
+    ERP) y `ERP_LIMITE_USD=5`.
++6. **Espacio «Prisma Studio» del menú (núcleo).** Un commit aparte toca solo `src/core/menu.tsx`: agrega
++   `"prisma-studio"` a `ClaveEspacio` y el espacio a `ESPACIOS`, después de Social Media (ícono `WandSparkles`,
++   descripción para Inicio). Usa el tono `social` para no tocar `src/index.css`; un color propio serían los tokens
++   `--menu-studio`/`--modulo-studio` en los cinco bloques de tema de `src/index.css` y `"studio"` en `TonoModulo`.
+-- 
+2.50.1 (Apple Git-155)
+

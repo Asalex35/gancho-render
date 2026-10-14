@@ -1,5 +1,7 @@
 # Integrar Gancho al ERP de Prismaticoos
 
+> **Actualización v1.0.0:** la instalación vigente está en [`deploy/erp/README.md`](../deploy/erp/README.md) (servidor del ERP, Cloudflare Access, Spaces, módulo «Kit de publicación» en Prisma Studio). Este documento queda como historia de decisiones.
+
 > **Para el Claude Code de Carlitos en la Mac mini** (`carlitos@prisma-server.local`, repo `~/erp`).
 > Léelo junto con la Guía de Carlitos (tu `~/.claude/CLAUDE.md`), el `CLAUDE.md` del ERP y `docs/HANDOFF.md` de Gancho.
 > Gancho ya trae todo lo necesario de su lado (v0.7.0). Aquí está **qué hacer en el ERP** y **qué decide Luis**.

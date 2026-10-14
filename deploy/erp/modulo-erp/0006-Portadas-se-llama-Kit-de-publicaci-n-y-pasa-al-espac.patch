@@ -1,0 +1,298 @@
+From cf2ee35caa9b7523b533c35eb8f27852bfed3a56 Mon Sep 17 00:00:00 2001
+From: "Carlitos Alexander (Carlos Ortiz)" <carlos.ortiz@prismaticoos.com>
+Date: Wed, 14 Oct 2026 17:56:03 -0600
+Subject: [PATCH 6/7] =?UTF-8?q?Portadas:=20se=20llama=20=C2=ABKit=20de=20p?=
+ =?UTF-8?q?ublicaci=C3=B3n=C2=BB=20y=20pasa=20al=20espacio=20Prisma=20Stud?=
+ =?UTF-8?q?io?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Nombre del árbol de permisos, menú, pantalla («Abrir Kit de publicación»),
+catálogo de actividad y mensaje 503. Las claves técnicas siguen siendo
+«portadas» (módulo, nodo, bitácora y /api/portadas/*) para no romper la
+integración con Gancho. Prueba de que vive en Prisma Studio.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ server/src/modules/portadas/actividad.ts    | 12 ++++++------
+ server/src/modules/portadas/gancho.ts       |  4 ++--
+ server/src/modules/portadas/index.ts        |  6 +++---
+ server/src/modules/portadas/permisos.ts     |  8 ++++----
+ server/src/modules/portadas/rutas.ts        |  4 ++--
+ server/test/portadas.test.ts                | 18 +++++++++++++++++-
+ src/modules/portadas/index.tsx              |  6 +++---
+ src/modules/portadas/pages/PortadasPage.tsx | 18 +++++++++---------
+ src/modules/portadas/secciones.ts           |  8 ++++----
+ 9 files changed, 50 insertions(+), 34 deletions(-)
+
+diff --git a/server/src/modules/portadas/actividad.ts b/server/src/modules/portadas/actividad.ts
+index 70db396..c609378 100644
+--- a/server/src/modules/portadas/actividad.ts
++++ b/server/src/modules/portadas/actividad.ts
+@@ -1,21 +1,21 @@
+ import { definirActividad } from "../../core/actividad/index.js";
+ 
+ /**
+- * Bitácora de actividad de Portadas (core/actividad). «abrir» lo registra el ERP al armar el inicio único; lo demás lo
++ * Bitácora de actividad del Kit de publicación (módulo «portadas», core/actividad). «abrir» lo registra el ERP al armar el inicio único; lo demás lo
+  * manda el servidor de Gancho, firmado, a `POST /api/portadas/bitacora` (ver rutas.ts y bitacora.ts).
+  * En `datos` van SOLO conteos, ids y el costo estimado en dólares (`usd`): nunca prompts, títulos, comentarios ni nombres.
+  */
+ export const actividadPortadas = definirActividad("portadas", [
+-  { tipo: "abrir", nombre: "Abrió Gancho desde el ERP", descripcion: "La persona pidió entrar a Gancho desde Social Media › Portadas (el ERP armó su inicio único). `datos.rol` = admin o editor.", objeto: "gancho" },
+-  { tipo: "entrada", nombre: "Entrada a Gancho", descripcion: "Gancho avisó que la persona inició sesión ahí (desde el ERP o con el usuario de emergencia).", objeto: "gancho" },
+-  { tipo: "portadas_generadas", nombre: "Portadas generadas", descripcion: "Gancho generó propuestas de portada para un episodio. La cantidad es el número de portadas, si Gancho la manda.", objeto: "episodio", medida: "cantidad" },
++  { tipo: "abrir", nombre: "Abrió el Kit de publicación", descripcion: "La persona abrió el Kit de publicación (Gancho) desde Prisma Studio (el ERP armó su inicio único). `datos.rol` = admin o editor.", objeto: "gancho" },
++  { tipo: "entrada", nombre: "Entrada al Kit de publicación", descripcion: "El Kit de publicación (Gancho) avisó que la persona inició sesión ahí (desde el ERP o con el usuario de emergencia).", objeto: "gancho" },
++  { tipo: "portadas_generadas", nombre: "Portadas generadas", descripcion: "El Kit de publicación generó propuestas de portada para un episodio. La cantidad es el número de portadas, si Gancho la manda.", objeto: "episodio", medida: "cantidad" },
+   { tipo: "portada_rehecha", nombre: "Portada rehecha", descripcion: "Se pidió rehacer una portada propuesta.", objeto: "portada" },
+   { tipo: "portada_ajustada", nombre: "Portada ajustada", descripcion: "Se ajustó una portada propuesta (texto, encuadre o colores).", objeto: "portada" },
+   { tipo: "versiones_creadas", nombre: "Versiones creadas", descripcion: "Se crearon versiones de una portada para otros formatos (YouTube, TikTok, Instagram, Facebook, Prisma Plus). La cantidad es el número de versiones.", objeto: "portada", medida: "cantidad" },
+   { tipo: "lote_lanzado", nombre: "Lote lanzado", descripcion: "Se lanzó un lote de portadas para varios episodios a la vez. La cantidad es el número de episodios; `datos.usd` = costo estimado.", objeto: "lote", medida: "cantidad" },
+-  { tipo: "episodio_borrado", nombre: "Episodio borrado", descripcion: "Se borró un episodio de Gancho.", objeto: "episodio" },
++  { tipo: "episodio_borrado", nombre: "Episodio borrado", descripcion: "Se borró un episodio del Kit de publicación.", objeto: "episodio" },
+   { tipo: "corte_corregido", nombre: "Corte corregido", descripcion: "Se corrigió el corte del hack (inicio) de un episodio.", objeto: "episodio" },
+-  { tipo: "otra_accion", nombre: "Otra acción en Gancho", descripcion: "Una acción de Gancho que este catálogo todavía no conoce (`datos.accion` = su clave).", objeto: "gancho" },
++  { tipo: "otra_accion", nombre: "Otra acción en el Kit de publicación", descripcion: "Una acción del Kit de publicación (Gancho) que este catálogo todavía no conoce (`datos.accion` = su clave).", objeto: "gancho" },
+ ] as const);
+ 
+ /** Tipos que Gancho puede registrar (todos menos «abrir», que es del ERP). */
+diff --git a/server/src/modules/portadas/gancho.ts b/server/src/modules/portadas/gancho.ts
+index 4652e1b..34825f4 100644
+--- a/server/src/modules/portadas/gancho.ts
++++ b/server/src/modules/portadas/gancho.ts
+@@ -9,9 +9,9 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+  * - GANCHO_SSO_SECRET: llave compartida del inicio único (en Gancho se llama ERP_SSO_SECRET). Mínimo 32 caracteres.
+  * - GANCHO_BITACORA_SECRET: llave con la que Gancho firma lo que manda a la bitácora (en Gancho, ERP_BITACORA_SECRET).
+  *   Mínimo 32 caracteres.
+- * Sin GANCHO_URL o GANCHO_SSO_SECRET, Portadas responde 503 con un mensaje amable (no hace falta apagar el módulo).
++ * Sin GANCHO_URL o GANCHO_SSO_SECRET, el Kit de publicación responde 503 con un mensaje amable (no hace falta apagar el módulo).
+  */
+-export const NO_CONECTADO = "Portadas aún no está conectado en este servidor. Pídeselo a Luis.";
++export const NO_CONECTADO = "El Kit de publicación aún no está conectado en este servidor. Pídeselo a Luis.";
+ export const MIN_SECRETO = 32;
+ 
+ export type ConfigGancho = { url: string | null; ssoSecreto: string | null; bitacoraSecreto: string | null };
+diff --git a/server/src/modules/portadas/index.ts b/server/src/modules/portadas/index.ts
+index 44a0c9d..30cdf59 100644
+--- a/server/src/modules/portadas/index.ts
++++ b/server/src/modules/portadas/index.ts
+@@ -5,15 +5,15 @@ import { rutasPortadas } from "./rutas.js";
+ import { configGancho } from "./gancho.js";
+ 
+ /**
+- * Ventanilla del módulo Portadas (Social Media › Portadas): PUENTE hacia Gancho, la herramienta de portadas, títulos y
++ * Ventanilla del módulo «portadas», que el equipo ve como Prisma Studio › Kit de publicación: PUENTE hacia Gancho, la herramienta de portadas, títulos y
+  * descripciones de YouTube, TikTok, Instagram, Facebook y Prisma Plus que vive en su propio subdominio. No tiene tablas:
+  * arma el inicio único (SSO) hacia Gancho y recibe, firmada, la bitácora de lo que se hace allá.
+  * Variables GANCHO_URL, GANCHO_SSO_SECRET y GANCHO_BITACORA_SECRET (gancho.ts; docs/portadas/README.md). Sin ellas el
+- * módulo queda encendido pero responde 503 «Portadas aún no está conectado…», así que no va en `apagadosFueraDeLocal`.
++ * módulo queda encendido pero responde 503 «El Kit de publicación aún no está conectado…», así que no va en `apagadosFueraDeLocal`.
+  */
+ export const portadas: ErpModule = {
+   clave: "portadas",
+-  nombre: "Portadas",
++  nombre: "Kit de publicación",
+   permisos: permisosPortadas,
+   /** Bitácora de actividad: abrir Gancho desde el ERP y lo que Gancho reporta (portadas, versiones, lotes…). */
+   actividad: { eventos: actividadPortadas.eventos },
+diff --git a/server/src/modules/portadas/permisos.ts b/server/src/modules/portadas/permisos.ts
+index 092da37..4e5ac1d 100644
+--- a/server/src/modules/portadas/permisos.ts
++++ b/server/src/modules/portadas/permisos.ts
+@@ -2,7 +2,7 @@ import type { Accion, PermisosModulo } from "../../core/permisos/arbol.js";
+ import { puede, type Permisos } from "../../core/permisos/service.js";
+ 
+ /**
+- * Permisos de Portadas (puente hacia Gancho, la herramienta de portadas que vive en su propio subdominio).
++ * Permisos del Kit de publicación (módulo técnico «portadas», puente hacia Gancho, la herramienta de portadas que vive en su propio subdominio).
+  * ver = ver la pantalla; crear = abrir Gancho y trabajar ahí (portadas, títulos y versiones); aprobar = entrar a Gancho
+  * como administrador (ve lo de todo el equipo y puede lanzar trabajos de más de US$5).
+  */
+@@ -13,12 +13,12 @@ const TODAS: Accion[] = ["ver", "crear", "aprobar"];
+ export const permisosPortadas: PermisosModulo = {
+   arbol: {
+     clave: PORTADAS,
+-    nombre: "Portadas (Gancho)",
+-    descripcion: "Portadas, títulos y descripciones de cada red social y de Prisma Plus con Gancho (herramienta aparte).",
++    nombre: "Kit de publicación",
++    descripcion: "Prisma Studio: portadas, títulos y descripciones de cada red social y de Prisma Plus (con Gancho, herramienta aparte).",
+     acciones: TODAS,
+     ayudaAcciones: {
+       crear: "Generar portadas, títulos y versiones",
+-      aprobar: "Administrar Gancho: ver lo de todo el equipo y lanzar trabajos de más de US$5",
++      aprobar: "Administrar el Kit de publicación: ver lo de todo el equipo y lanzar trabajos de más de US$5",
+     },
+   },
+   // Módulo nuevo (oct-2026): no hubo niveles anteriores; la equivalencia es para scripts y pruebas que hablan en niveles.
+diff --git a/server/src/modules/portadas/rutas.ts b/server/src/modules/portadas/rutas.ts
+index 34726da..9494689 100644
+--- a/server/src/modules/portadas/rutas.ts
++++ b/server/src/modules/portadas/rutas.ts
+@@ -8,7 +8,7 @@ import { MAX_CUERPO_BITACORA, NO_CONECTADO, aTiempo, configGancho, firmaBitacora
+ import { correoDe, hechoDe, leerEvento } from "./bitacora.js";
+ 
+ /**
+- * API de Portadas (puente hacia Gancho):
++ * API del Kit de publicación (módulo técnico «portadas», puente hacia Gancho):
+  * - GET  /api/portadas/estado     (Portadas › Ver): ¿está conectado este servidor con Gancho?
+  * - POST /api/portadas/entrar     (Portadas › Crear): arma el inicio único y devuelve la URL de Gancho.
+  * - POST /api/portadas/bitacora   (público, firmado): Gancho manda cada acción para la bitácora de actividad del ERP.
+@@ -24,7 +24,7 @@ export async function rutasPortadas(app: FastifyInstance) {
+     if (!c.url || !c.ssoSecreto) return reply.code(503).send({ error: NO_CONECTADO });
+     const u = req.usuario!;
+     // Gancho solo acepta cuentas de la empresa (y el ERP solo da de alta esas): se dice claro antes de mandar a la persona.
+-    if (!esDominioPermitido(u.email)) return reply.code(403).send({ error: `Solo las cuentas @${DOMINIO_PERMITIDO} pueden entrar a Portadas.` });
++    if (!esDominioPermitido(u.email)) return reply.code(403).send({ error: `Solo las cuentas @${DOMINIO_PERMITIDO} pueden entrar al Kit de publicación.` });
+     const rol = rolEnGancho(u.permisos);
+     const token = tokenPara({ email: u.email, nombre: u.name, rol }, c.ssoSecreto);
+     await audit("portadas.entrar", req, u.id, { rol });
+diff --git a/server/test/portadas.test.ts b/server/test/portadas.test.ts
+index 721826d..bb68cfa 100644
+--- a/server/test/portadas.test.ts
++++ b/server/test/portadas.test.ts
+@@ -4,6 +4,8 @@ import type { FastifyInstance } from "fastify";
+ import { ORIGEN, actividadDe, crearRol, crearUsuario, entrar, pedir, preparar } from "./ayuda.js";
+ import { configGancho, urlGancho } from "../src/modules/portadas/gancho.js";
+ import { correoDe, hechoDe, leerEvento } from "../src/modules/portadas/bitacora.js";
++import { readFileSync } from "node:fs";
++import { permisosPortadas } from "../src/modules/portadas/permisos.js";
+ 
+ // Módulo Portadas (puente hacia Gancho): permisos, 503 sin conexión, token del inicio único con el formato que Gancho
+ // verifica, y la bitácora firmada que manda Gancho. Llaves FICTICIAS de prueba (nunca las reales).
+@@ -56,7 +58,7 @@ describe("portadas · permisos y conexión", () => {
+     expect(e.json()).toEqual({ conectado: false });
+     const r = await pedir(app, "POST", "/api/portadas/entrar", s.editora);
+     expect(r.statusCode).toBe(503);
+-    expect(r.json().error).toBe("Portadas aún no está conectado en este servidor. Pídeselo a Luis.");
++    expect(r.json().error).toBe("El Kit de publicación aún no está conectado en este servidor. Pídeselo a Luis.");
+     // Solo la URL o solo la llave tampoco basta.
+     conectar({ GANCHO_URL: URL_GANCHO });
+     expect((await pedir(app, "POST", "/api/portadas/entrar", s.editora)).statusCode).toBe(503);
+@@ -239,3 +241,17 @@ describe("portadas · traducción de eventos (lógica pura)", () => {
+     expect(correoDe({ ...ev, email: null, usuario: "luis.solis" }, "prismaticoos.com")).toBe("luis.solis@prismaticoos.com");
+   });
+ });
++
++describe("portadas · Kit de publicación en Prisma Studio", () => {
++  const leer = (r: string) => readFileSync(new URL(`../../${r}`, import.meta.url), "utf8");
++  it("de cara al equipo se llama «Kit de publicación» y vive en el espacio Prisma Studio (claves técnicas «portadas»)", () => {
++    expect(permisosPortadas.arbol).toMatchObject({ clave: "portadas", nombre: "Kit de publicación" });
++    const menu = leer("src/core/menu.tsx");
++    expect(menu).toMatch(/clave: "prisma-studio", titulo: "Prisma Studio"/);
++    // Después de Social Media en el orden de los espacios.
++    expect(menu.indexOf("clave: \"prisma-studio\"")).toBeGreaterThan(menu.indexOf("clave: \"social-media\", titulo"));
++    expect(leer("src/modules/portadas/index.tsx")).toMatch(/espacio: "prisma-studio"/);
++    expect(leer("src/modules/portadas/secciones.ts")).toMatch(/label: "Kit de publicación"/);
++    expect(leer("src/modules/portadas/pages/PortadasPage.tsx")).toMatch(/Abrir Kit de publicación/);
++  });
++});
+diff --git a/src/modules/portadas/index.tsx b/src/modules/portadas/index.tsx
+index 4de310c..eb22800 100644
+--- a/src/modules/portadas/index.tsx
++++ b/src/modules/portadas/index.tsx
+@@ -2,10 +2,10 @@ import type { ModuloFront } from "@/core/modulos";
+ import { PORTADAS } from "@/modules/portadas/secciones";
+ import PortadasPage from "@/modules/portadas/pages/PortadasPage";
+ 
+-/** Portadas (Social Media › Portadas): puente hacia Gancho, que vive en su propio subdominio. */
++/** Kit de publicación (Prisma Studio › Kit de publicación; módulo técnico «portadas»): puente hacia Gancho, que vive en su propio subdominio. */
+ export const portadas: ModuloFront = {
+   clave: "portadas",
+-  nombre: "Portadas",
+-  espacio: "social-media",
++  nombre: "Kit de publicación",
++  espacio: "prisma-studio",
+   menu: [{ ...PORTADAS, render: (item) => <PortadasPage item={item} /> }],
+ };
+diff --git a/src/modules/portadas/pages/PortadasPage.tsx b/src/modules/portadas/pages/PortadasPage.tsx
+index 9f1a150..a1cb721 100644
+--- a/src/modules/portadas/pages/PortadasPage.tsx
++++ b/src/modules/portadas/pages/PortadasPage.tsx
+@@ -13,10 +13,10 @@ import { NODO_PORTADAS } from "@/modules/portadas/secciones";
+ 
+ type Estado = { conectado: boolean; url?: string };
+ 
+-const NO_CONECTADO = "Portadas aún no está conectado en este servidor. Pídeselo a Luis.";
++const NO_CONECTADO = "El Kit de publicación aún no está conectado en este servidor. Pídeselo a Luis.";
+ 
+ /**
+- * Social Media › Portadas: puente hacia Gancho. El botón pide al ERP un enlace de inicio único (vale 90 s y una sola vez)
++ * Prisma Studio › Kit de publicación: puente hacia Gancho. El botón pide al ERP un enlace de inicio único (vale 90 s y una sola vez)
+  * y lo abre en una pestaña nueva. La pestaña se abre EN EL CLIC (antes de esperar al servidor) para que Safari no la
+  * bloquee; se le quita el acceso a esta ventana (`opener = null`, lo mismo que «noopener»). Si el navegador la bloquea,
+  * se muestra el enlace para abrirlo a mano.
+@@ -37,7 +37,7 @@ export default function PortadasPage({ item }: { item: MenuItem }) {
+       else setEnlace(url);
+     } catch (e) {
+       pestana?.close();
+-      avisar.error(e, "No se pudo abrir Portadas. Inténtalo de nuevo.");
++      avisar.error(e, "No se pudo abrir el Kit de publicación. Inténtalo de nuevo.");
+     }
+   };
+ 
+@@ -50,28 +50,28 @@ export default function PortadasPage({ item }: { item: MenuItem }) {
+           <Tarjeta><Esqueleto className="h-28 w-full" /></Tarjeta>
+         ) : !estado.conectado ? (
+           <Tarjeta>
+-            <EmptyState icon={PlugZap} accent={item.accent} title="Portadas aún no está conectado" text={NO_CONECTADO} />
++            <EmptyState icon={PlugZap} accent={item.accent} title="El Kit de publicación aún no está conectado" text={NO_CONECTADO} />
+           </Tarjeta>
+         ) : (
+-          <Tarjeta titulo="Gancho" subtitulo="Se abre en una pestaña nueva con tu cuenta del ERP; no necesitas otra contraseña." subtituloVisible>
++          <Tarjeta titulo="Kit de publicación" subtitulo="Se abre en una pestaña nueva con tu cuenta del ERP; no necesitas otra contraseña." subtituloVisible>
+             <p className="max-w-2xl text-[14px] text-fg-muted">
+-              Gancho crea portadas, títulos y descripciones para YouTube, TikTok, Instagram, Facebook y Prisma Plus a partir de tus episodios.
++              El Kit de publicación crea portadas, títulos y descripciones para YouTube, TikTok, Instagram, Facebook y Prisma Plus a partir de tus episodios.
+             </p>
+             {puedeAbrir ? (
+               <div className="mt-5 flex flex-wrap items-center gap-3">
+-                <Boton variante="primario" icono={ExternalLink} onClick={abrir}>Abrir Portadas</Boton>
++                <Boton variante="primario" icono={ExternalLink} onClick={abrir}>Abrir Kit de publicación</Boton>
+                 {enlace && (
+                   <span className="text-[13px] text-fg-muted">
+                     Tu navegador bloqueó la pestaña nueva.{" "}
+                     <a href={enlace} target="_blank" rel="noopener noreferrer" className="font-medium text-fg underline" onClick={() => setEnlace(null)}>
+-                      Abrir Portadas aquí
++                      Abrir el Kit de publicación aquí
+                     </a>{" "}
+                     (el enlace vale 90 segundos y una sola vez).
+                   </span>
+                 )}
+               </div>
+             ) : (
+-              <Aviso tono="info" className="mt-5">Tu rol puede ver esta sección pero no abrir Gancho. Pide a Luis el permiso «Crear» en Portadas (Gancho).</Aviso>
++              <Aviso tono="info" className="mt-5">Tu rol puede ver esta sección pero no abrir el Kit de publicación. Pide a Luis el permiso «Crear» en Kit de publicación.</Aviso>
+             )}
+           </Tarjeta>
+         )}
+diff --git a/src/modules/portadas/secciones.ts b/src/modules/portadas/secciones.ts
+index 04f08f6..17cf5f9 100644
+--- a/src/modules/portadas/secciones.ts
++++ b/src/modules/portadas/secciones.ts
+@@ -1,17 +1,17 @@
+ import { Images } from "lucide-react";
+ import type { MenuItem } from "@/core/menu";
+ 
+-/** Nodo del árbol de permisos (server/src/modules/portadas/permisos.ts) y ruta de la pantalla. */
++/** Nodo del árbol de permisos (server/src/modules/portadas/permisos.ts) y ruta de la pantalla (claves técnicas «portadas»). */
+ export const NODO_PORTADAS = "portadas";
+ export const RUTA_PORTADAS = "/portadas";
+ 
+-/** Entrada del menú: Social Media › Portadas (con los colores de Social Media). */
++/** Entrada del menú: Prisma Studio › Kit de publicación (el espacio usa el tono de Social Media). */
+ export const PORTADAS: MenuItem = {
+-  label: "Portadas",
++  label: "Kit de publicación",
+   path: RUTA_PORTADAS,
+   icon: Images,
+   accent: "#ec4899",
+   gradient: "linear-gradient(135deg, #f9ce34 0%, #ee2a7b 50%, #6228d7 100%)",
+-  description: "Portadas, títulos y descripciones con Gancho para YouTube, TikTok, Instagram, Facebook y Prisma Plus.",
++  description: "Portadas, títulos y descripciones para YouTube, TikTok, Instagram, Facebook y Prisma Plus.",
+   nodo: NODO_PORTADAS,
+ };
+-- 
+2.50.1 (Apple Git-155)
+

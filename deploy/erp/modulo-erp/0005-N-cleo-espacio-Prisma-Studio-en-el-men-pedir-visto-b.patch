@@ -1,0 +1,51 @@
+From 3c92f40e7baa914e4d8ea9e25e820bc93aaa6ba2 Mon Sep 17 00:00:00 2001
+From: "Carlitos Alexander (Carlos Ortiz)" <carlos.ortiz@prismaticoos.com>
+Date: Wed, 14 Oct 2026 17:54:47 -0600
+Subject: [PATCH 5/7] =?UTF-8?q?N=C3=BAcleo:=20espacio=20Prisma=20Studio=20?=
+ =?UTF-8?q?en=20el=20men=C3=BA=20(pedir=20visto=20bueno=20a=20Luis)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Espacio nuevo «Prisma Studio» después de Social Media (clave prisma-studio,
+ícono WandSparkles, descripción para Inicio). Reutiliza el tono «social»
+para no agregar tokens a src/index.css. Solo cambia src/core/menu.tsx.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/core/menu.tsx | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/core/menu.tsx b/src/core/menu.tsx
+index 0dc2c6e..9e48ac1 100644
+--- a/src/core/menu.tsx
++++ b/src/core/menu.tsx
+@@ -1,5 +1,5 @@
+ import type { ComponentType, ReactNode } from "react";
+-import { BriefcaseBusiness, Building2, CalendarOff, Clapperboard, Contact, DollarSign, House, Landmark, Settings, Share2, ShieldCheck, UsersRound } from "lucide-react";
++import { BriefcaseBusiness, Building2, CalendarOff, Clapperboard, Contact, DollarSign, House, Landmark, Settings, Share2, ShieldCheck, UsersRound, WandSparkles } from "lucide-react";
+ import type { IconComponent } from "@/shared/components/icons/TikTokIcon";
+ import SettingsPage from "@/core/pages/SettingsPage";
+ import AdminPage from "@/core/pages/AdminPage";
+@@ -112,7 +112,7 @@ export const bloquesPie = (): BloqueMenu[] => [{ tipo: "seccion", seccion: ADMIN
+  * y Administración (el pie) es siempre el último. La lógica de agrupar está en menu-logica.ts (`agruparEnEspacios`).
+  * `descripcion` = texto de su tarjeta en Inicio («Tus sistemas»).
+  */
+-export type ClaveEspacio = "social-media" | "produccion" | "comercial" | "rrhh";
++export type ClaveEspacio = "social-media" | "prisma-studio" | "produccion" | "comercial" | "rrhh";
+ /**
+  * `tono` = color del módulo (tokens de src/index.css): en el menú `var(--menu-<tono>)` (sobre su fondo) y en el encabezado
+  * de sus pantallas `var(--modulo-<tono>)` (sobre la página). Magenta, coral, dorado de la marca, verde agua y azul acero.
+@@ -121,6 +121,9 @@ export type TonoModulo = "social" | "produccion" | "comercial" | "rrhh" | "admin
+ export type EspacioMenu = { clave: ClaveEspacio | "administracion"; titulo: string; icon: IconComponent; descripcion: string; tono: TonoModulo };
+ export const ESPACIOS: readonly EspacioMenu[] = [
+   { clave: "social-media", titulo: "Social Media", icon: Share2, tono: "social", descripcion: "Resumen, cada red e Insights de las cuentas de Prismaticoos." },
++  // Prisma Studio: herramientas para publicar (hoy el Kit de publicación). Reutiliza el tono de Social Media para no
++  // agregar colores nuevos a src/index.css; si Luis quiere uno propio, son los tokens --menu-studio/--modulo-studio.
++  { clave: "prisma-studio", titulo: "Prisma Studio", icon: WandSparkles, tono: "social", descripcion: "Herramientas para publicar: portadas, títulos y descripciones para cada red y Prisma Plus." },
+   { clave: "produccion", titulo: "Producción", icon: Clapperboard, tono: "produccion", descripcion: "De la idea al guion, el rodaje y la postproducción, con sus catálogos y equipo." },
+   { clave: "comercial", titulo: "Comercial", icon: BriefcaseBusiness, tono: "comercial", descripcion: "Cotizador, clientes, embudo, órdenes, cobranza, licencias y paneles de venta." },
+   { clave: "rrhh", titulo: "RRHH", icon: Contact, tono: "rrhh", descripcion: "Personas, contratos, asistencia, vacaciones y nómina por empresa del holding." },
+-- 
+2.50.1 (Apple Git-155)
+
