@@ -19,6 +19,9 @@ import * as ia from "./ai/claude.js";
 import { transcripcionDisponible } from "./transcribir.js";
 import * as biblioteca from "./biblioteca.js";
 import { FORMATOS, TIPOS } from "./formatos.js";
+import { exigirAccess, accessActivo } from "./cloudflare.js";
+import { exportar as exportarRespaldo } from "./respaldo.js";
+import { usuarioDeCorreo } from "./erp.js";
 import { erp, entrarConToken, registrar, revisarGasto, USD_POR_IMAGEN, USD_POR_EPISODIO_TEXTO } from "./erp.js";
 import { leerLinks, apiDisponible as youtubeApi, buscar as buscarYouTube, tendencias as tendenciasYouTube } from "./competencia.js";
 import fs from "node:fs";
@@ -70,6 +73,8 @@ export function crearApp() {
     if (config.prod) res.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
     next();
   });
+  // Servidores del ERP: sin el pase de Cloudflare Access no se entra (salvo la salud local y las ligas firmadas).
+  app.use(exigirAccess(["/salud", "/pub"]));
   app.use(express.json({ limit: "3mb" })); // lotes grandes pegados como texto
 
   app.get("/salud", envolver(async (req, res) => { await q("SELECT 1"); res.json({ ok: true }); }));
@@ -106,7 +111,7 @@ export function crearApp() {
   // Inicio de sesión único desde el ERP: /sso?t=<token firmado por el ERP>&volver=/#/ruta
   app.get("/sso", limiteLogin, envolver(async (req, res) => {
     try {
-      const u = await entrarConToken(req.query.t);
+      const u = await entrarConToken(req.query.t, accessActivo ? req.access?.email || "-" : undefined);
       crearSesion(res, u);
       await registrar({ usuario: u.usuario, ip: req.ip }, "entrar", { metodo: "erp" });
       const volver = String(req.query.volver || "/");
@@ -120,6 +125,12 @@ export function crearApp() {
 
   // ================= Todo lo de abajo requiere sesión =================
   app.use(requiereSesion, antiCsrf);
+  // Con Cloudflare Access, la sesión de Gancho debe ser de la misma persona que pasó Access (navegador compartido).
+  if (accessActivo) app.use((req, res, next) => {
+    if (req.user.usuario === config.admin.user || usuarioDeCorreo(req.access?.email) === req.user.usuario) return next();
+    cerrarSesion(res);
+    return req.path.startsWith("/api/") ? res.status(401).json({ error: "Cambió la cuenta. Vuelve a entrar desde el ERP." }) : res.redirect("/login");
+  });
   app.use("/api", rateLimit({ windowMs: 60e3, limit: 300, standardHeaders: true, legacyHeaders: false, keyGenerator: (req) => req.user.id }));
 
   app.get("/", (req, res) => res.sendFile(path.join(PUBLIC, "index.html")));
@@ -899,6 +910,17 @@ export function crearApp() {
     const trabajos = await all(`SELECT state, retry_count, created_on, started_on, completed_on, left(coalesce(output::text, ''), 300) AS salida
       FROM pgboss.job WHERE name = 'formato' AND data->>'formatoId' = $1 ORDER BY created_on DESC LIMIT 10`, [id]).catch((e) => [{ error: e.message }]);
     res.json({ formato: f && { ...f, imagen: { ...f.imagen, taskId: f.imagen?.taskId ? "sí" : "no" } }, trabajos });
+  }));
+  // Respaldo para mudar de servidor: tablas + imágenes (sin videos originales) en .tar.gz.
+  app.get("/api/admin/respaldo", soloAdmin, envolver(async (req, res) => {
+    await registrar(req, "descargar_respaldo", {});
+    res.set({ "Content-Type": "application/gzip", "Content-Disposition": `attachment; filename="gancho-respaldo-${new Date().toISOString().slice(0, 10)}.tar.gz"`, "Cache-Control": "no-store" });
+    try { await exportarRespaldo(res); }
+    catch (e) {
+      console.error("Respaldo:", e.message);
+      if (!res.headersSent) { res.removeHeader("Content-Disposition"); return res.status(500).json({ error: `No se pudo armar el respaldo: ${e.message}` }); }
+      res.destroy(e); // la descarga queda incompleta y el navegador lo marca como fallida
+    }
   }));
   app.get("/api/admin/almacenamiento", soloAdmin, envolver(async (req, res) => {
     res.json(await storage.tamanos());

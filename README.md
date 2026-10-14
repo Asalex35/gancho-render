@@ -1,7 +1,11 @@
 # Gancho · by Prismáticoos
 
-Portadas, títulos, descripción y tags para YouTube, de uno en uno o por lotes de cientos.
-Claude escribe y califica; Nano Banana pinta.
+Portadas, títulos, descripción y tags para YouTube, TikTok, Instagram, Facebook y Prisma Plus, de uno en uno o por
+lotes de cientos. Claude escribe y califica; Google (Nano Banana Pro oficial) pinta, con nanobananaapi.ai y fal.ai de respaldo.
+
+> **Producción: ERP de Prismaticoos** (Social Media › Portadas). Instalación paso a paso para Luis en
+> [`deploy/erp/README.md`](deploy/erp/README.md). Revisión de la instalación: `npm run verificar`.
+> Mudar datos de otro servidor: Administración › Descargar respaldo y `npm run importar`.
 
 ## Cómo funciona
 ```
@@ -26,7 +30,8 @@ Cada canal tiene idioma (español, inglés, portugués), voz, estilo visual, tí
 Los títulos se escriben como nativo del país y la interfaz muestra la traducción al español.
 
 ## Rostros parecidos a los actores
-- Cada actor tiene una **biblioteca de rostros**: sus fotos subidas + las mejores caras de cada episodio (máx. 40).
+- Cada actor tiene una **biblioteca de rostros**: sus fotos subidas + las mejores caras de cada episodio (máx. 24, con variedad de ángulos).
+- En la portada salen **solo los actores con foto** (o quien pidas por nombre en las notas): sin extras ni gente al fondo.
 - En el flujo automático, Gancho agrupa las caras del video por persona, **reconoce al actor** contra la biblioteca
   y, con la historia, decide qué personaje es. Si no lo conoce, lo crea como "Sin nombre" para renombrarlo una vez.
 - Referencias para Nano Banana Pro: cara del episodio (frente y 3/4), medio cuerpo y las mejores caras de la biblioteca.

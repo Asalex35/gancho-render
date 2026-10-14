@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Red de seguridad en Spaces (además de la limpieza diaria de Gancho):
+     videos originales se borran a los 4 días y las subidas en partes abandonadas al día. -->
+<LifecycleConfiguration>
+  <Rule>
+    <ID>videos-originales</ID>
+    <Filter><Prefix>videos/</Prefix></Filter>
+    <Status>Enabled</Status>
+    <Expiration><Days>4</Days></Expiration>
+  </Rule>
+  <Rule>
+    <ID>subidas-abandonadas</ID>
+    <Filter><Prefix></Prefix></Filter>
+    <Status>Enabled</Status>
+    <AbortIncompleteMultipartUpload><DaysAfterInitiation>1</DaysAfterInitiation></AbortIncompleteMultipartUpload>
+  </Rule>
+</LifecycleConfiguration>

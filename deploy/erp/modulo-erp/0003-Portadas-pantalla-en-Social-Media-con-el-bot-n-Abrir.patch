@@ -1,0 +1,164 @@
+From a9ebb2dd2c32afb3a86fe2e550d9a5ba48aed84b Mon Sep 17 00:00:00 2001
+From: "Carlitos Alexander (Carlos Ortiz)" <carlos.ortiz@prismaticoos.com>
+Date: Wed, 14 Oct 2026 17:44:32 -0600
+Subject: [PATCH 3/4] =?UTF-8?q?Portadas:=20pantalla=20en=20Social=20Media?=
+ =?UTF-8?q?=20con=20el=20bot=C3=B3n=20=C2=ABAbrir=20Portadas=C2=BB?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/modules/index.ts                        |  3 +-
+ src/modules/portadas/index.tsx              | 11 +++
+ src/modules/portadas/pages/PortadasPage.tsx | 81 +++++++++++++++++++++
+ src/modules/portadas/secciones.ts           | 17 +++++
+ 4 files changed, 111 insertions(+), 1 deletion(-)
+ create mode 100644 src/modules/portadas/index.tsx
+ create mode 100644 src/modules/portadas/pages/PortadasPage.tsx
+ create mode 100644 src/modules/portadas/secciones.ts
+
+diff --git a/src/modules/index.ts b/src/modules/index.ts
+index 75b3d65..346c134 100644
+--- a/src/modules/index.ts
++++ b/src/modules/index.ts
+@@ -7,7 +7,8 @@ import { comercial } from "@/modules/comercial";
+ import { rrhh } from "@/modules/rrhh";
+ import { ia } from "@/modules/ia";
+ import { chat } from "@/modules/chat";
++import { portadas } from "@/modules/portadas";
+ 
+ /** Módulos activos del ERP, en el orden del menú. Un módulo nuevo se agrega aquí. */
+ // El chat va primero: en el menú queda justo debajo de Inicio (como en el diseño).
+-export const MODULOS: ModuloFront[] = [chat, redes, preproduccion, produccion, ventas, comercial, rrhh, ia];
++export const MODULOS: ModuloFront[] = [chat, redes, portadas, preproduccion, produccion, ventas, comercial, rrhh, ia];
+diff --git a/src/modules/portadas/index.tsx b/src/modules/portadas/index.tsx
+new file mode 100644
+index 0000000..4de310c
+--- /dev/null
++++ b/src/modules/portadas/index.tsx
+@@ -0,0 +1,11 @@
++import type { ModuloFront } from "@/core/modulos";
++import { PORTADAS } from "@/modules/portadas/secciones";
++import PortadasPage from "@/modules/portadas/pages/PortadasPage";
++
++/** Portadas (Social Media › Portadas): puente hacia Gancho, que vive en su propio subdominio. */
++export const portadas: ModuloFront = {
++  clave: "portadas",
++  nombre: "Portadas",
++  espacio: "social-media",
++  menu: [{ ...PORTADAS, render: (item) => <PortadasPage item={item} /> }],
++};
+diff --git a/src/modules/portadas/pages/PortadasPage.tsx b/src/modules/portadas/pages/PortadasPage.tsx
+new file mode 100644
+index 0000000..9f1a150
+--- /dev/null
++++ b/src/modules/portadas/pages/PortadasPage.tsx
+@@ -0,0 +1,81 @@
++import { useState } from "react";
++import { ExternalLink, PlugZap } from "lucide-react";
++import AppShell from "@/core/layout/AppShell";
++import PageTransition from "@/core/layout/PageTransition";
++import type { MenuItem } from "@/core/menu";
++import { usePermisos } from "@/core/auth/AuthContext";
++import { Aviso, Boton, Esqueleto, Tarjeta } from "@/shared/components/ui";
++import EmptyState from "@/shared/components/EmptyState";
++import { post } from "@/shared/lib/api";
++import { avisar } from "@/shared/lib/avisos";
++import { useLectura } from "@/shared/lib/cache";
++import { NODO_PORTADAS } from "@/modules/portadas/secciones";
++
++type Estado = { conectado: boolean; url?: string };
++
++const NO_CONECTADO = "Portadas aún no está conectado en este servidor. Pídeselo a Luis.";
++
++/**
++ * Social Media › Portadas: puente hacia Gancho. El botón pide al ERP un enlace de inicio único (vale 90 s y una sola vez)
++ * y lo abre en una pestaña nueva. La pestaña se abre EN EL CLIC (antes de esperar al servidor) para que Safari no la
++ * bloquee; se le quita el acceso a esta ventana (`opener = null`, lo mismo que «noopener»). Si el navegador la bloquea,
++ * se muestra el enlace para abrirlo a mano.
++ */
++export default function PortadasPage({ item }: { item: MenuItem }) {
++  const { puede } = usePermisos();
++  const { datos: estado, error } = useLectura<Estado>("/api/portadas/estado");
++  const [enlace, setEnlace] = useState<string | null>(null);
++  const puedeAbrir = puede(NODO_PORTADAS, "crear");
++
++  const abrir = async () => {
++    setEnlace(null);
++    const pestana = window.open("about:blank", "_blank");
++    if (pestana) pestana.opener = null;
++    try {
++      const { url } = await post<{ url: string }>("/api/portadas/entrar");
++      if (pestana && !pestana.closed) pestana.location.replace(url);
++      else setEnlace(url);
++    } catch (e) {
++      pestana?.close();
++      avisar.error(e, "No se pudo abrir Portadas. Inténtalo de nuevo.");
++    }
++  };
++
++  return (
++    <AppShell title={item.label} subtitle={item.description}>
++      <PageTransition>
++        {error ? (
++          <Aviso tono="peligro">{error.message}</Aviso>
++        ) : !estado ? (
++          <Tarjeta><Esqueleto className="h-28 w-full" /></Tarjeta>
++        ) : !estado.conectado ? (
++          <Tarjeta>
++            <EmptyState icon={PlugZap} accent={item.accent} title="Portadas aún no está conectado" text={NO_CONECTADO} />
++          </Tarjeta>
++        ) : (
++          <Tarjeta titulo="Gancho" subtitulo="Se abre en una pestaña nueva con tu cuenta del ERP; no necesitas otra contraseña." subtituloVisible>
++            <p className="max-w-2xl text-[14px] text-fg-muted">
++              Gancho crea portadas, títulos y descripciones para YouTube, TikTok, Instagram, Facebook y Prisma Plus a partir de tus episodios.
++            </p>
++            {puedeAbrir ? (
++              <div className="mt-5 flex flex-wrap items-center gap-3">
++                <Boton variante="primario" icono={ExternalLink} onClick={abrir}>Abrir Portadas</Boton>
++                {enlace && (
++                  <span className="text-[13px] text-fg-muted">
++                    Tu navegador bloqueó la pestaña nueva.{" "}
++                    <a href={enlace} target="_blank" rel="noopener noreferrer" className="font-medium text-fg underline" onClick={() => setEnlace(null)}>
++                      Abrir Portadas aquí
++                    </a>{" "}
++                    (el enlace vale 90 segundos y una sola vez).
++                  </span>
++                )}
++              </div>
++            ) : (
++              <Aviso tono="info" className="mt-5">Tu rol puede ver esta sección pero no abrir Gancho. Pide a Luis el permiso «Crear» en Portadas (Gancho).</Aviso>
++            )}
++          </Tarjeta>
++        )}
++      </PageTransition>
++    </AppShell>
++  );
++}
+diff --git a/src/modules/portadas/secciones.ts b/src/modules/portadas/secciones.ts
+new file mode 100644
+index 0000000..04f08f6
+--- /dev/null
++++ b/src/modules/portadas/secciones.ts
+@@ -0,0 +1,17 @@
++import { Images } from "lucide-react";
++import type { MenuItem } from "@/core/menu";
++
++/** Nodo del árbol de permisos (server/src/modules/portadas/permisos.ts) y ruta de la pantalla. */
++export const NODO_PORTADAS = "portadas";
++export const RUTA_PORTADAS = "/portadas";
++
++/** Entrada del menú: Social Media › Portadas (con los colores de Social Media). */
++export const PORTADAS: MenuItem = {
++  label: "Portadas",
++  path: RUTA_PORTADAS,
++  icon: Images,
++  accent: "#ec4899",
++  gradient: "linear-gradient(135deg, #f9ce34 0%, #ee2a7b 50%, #6228d7 100%)",
++  description: "Portadas, títulos y descripciones con Gancho para YouTube, TikTok, Instagram, Facebook y Prisma Plus.",
++  nodo: NODO_PORTADAS,
++};
+-- 
+2.50.1 (Apple Git-155)
+

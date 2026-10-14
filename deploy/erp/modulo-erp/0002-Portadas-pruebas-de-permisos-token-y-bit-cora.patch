@@ -1,0 +1,265 @@
+From 9074798dd75578518ce64c0b224c168a9c255cbd Mon Sep 17 00:00:00 2001
+From: "Carlitos Alexander (Carlos Ortiz)" <carlos.ortiz@prismaticoos.com>
+Date: Wed, 14 Oct 2026 17:44:32 -0600
+Subject: [PATCH 2/4] =?UTF-8?q?Portadas:=20pruebas=20de=20permisos,=20toke?=
+ =?UTF-8?q?n=20y=20bit=C3=A1cora?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ server/test/portadas.test.ts | 241 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 241 insertions(+)
+ create mode 100644 server/test/portadas.test.ts
+
+diff --git a/server/test/portadas.test.ts b/server/test/portadas.test.ts
+new file mode 100644
+index 0000000..721826d
+--- /dev/null
++++ b/server/test/portadas.test.ts
+@@ -0,0 +1,241 @@
++import { afterEach, beforeAll, describe, expect, it } from "vitest";
++import { createHmac } from "node:crypto";
++import type { FastifyInstance } from "fastify";
++import { ORIGEN, actividadDe, crearRol, crearUsuario, entrar, pedir, preparar } from "./ayuda.js";
++import { configGancho, urlGancho } from "../src/modules/portadas/gancho.js";
++import { correoDe, hechoDe, leerEvento } from "../src/modules/portadas/bitacora.js";
++
++// Módulo Portadas (puente hacia Gancho): permisos, 503 sin conexión, token del inicio único con el formato que Gancho
++// verifica, y la bitácora firmada que manda Gancho. Llaves FICTICIAS de prueba (nunca las reales).
++const URL_GANCHO = "https://portadas.ejemplo.test";
++const SSO = "llave-sso-de-prueba-portadas-0123456789abcdef";
++const BITACORA = "llave-bitacora-de-prueba-portadas-0123456789";
++const VARIABLES = ["GANCHO_URL", "GANCHO_SSO_SECRET", "GANCHO_BITACORA_SECRET"] as const;
++
++const conectar = (v: Partial<Record<(typeof VARIABLES)[number], string>> = { GANCHO_URL: URL_GANCHO, GANCHO_SSO_SECRET: SSO, GANCHO_BITACORA_SECRET: BITACORA }) => {
++  for (const k of VARIABLES) delete process.env[k];
++  Object.assign(process.env, v);
++};
++afterEach(() => { for (const k of VARIABLES) delete process.env[k]; });
++
++let app: FastifyInstance;
++const s: Record<string, string | undefined> = {};
++const id: Record<string, number> = {};
++beforeAll(async () => {
++  app = await preparar();
++  const ver = await crearRol("Portadas: ver", { nodos: { portadas: { acciones: ["ver"] } }, capacidades: [] });
++  const crear = await crearRol("Portadas: crear", { nodos: { portadas: { acciones: ["ver", "crear"] } }, capacidades: [] });
++  const aprobar = await crearRol("Portadas: aprobar", { nodos: { portadas: { acciones: ["ver", "crear", "aprobar"] } }, capacidades: [] });
++  for (const [q, roles, superadmin] of [["nadie", [], false], ["mira", [ver], false], ["editora", [crear], false], ["jefa", [aprobar], false], ["dueno", [], true]] as const) {
++    id[q] = await crearUsuario(`${q}.portadas@prismaticoos.com`, { roles: [...roles], superadmin });
++    s[q] = (await entrar(app, `${q}.portadas@prismaticoos.com`)).cookie;
++  }
++});
++
++const decodificar = (url: string) => {
++  expect(url.startsWith(`${URL_GANCHO}/sso?t=`)).toBe(true);
++  const token = decodeURIComponent(new URL(url).searchParams.get("t")!);
++  const [datos, firma] = token.split(".");
++  return { datos, firma, json: JSON.parse(Buffer.from(datos, "base64url").toString("utf8")) as { email: string; nombre: string; rol: string; exp: number; n: string } };
++};
++
++describe("portadas · permisos y conexión", () => {
++  it("sin permiso del nodo «portadas»: 403; con solo «ver» no puede abrir Gancho", async () => {
++    conectar();
++    expect((await pedir(app, "GET", "/api/portadas/estado", s.nadie)).statusCode).toBe(403);
++    expect((await pedir(app, "POST", "/api/portadas/entrar", s.nadie)).statusCode).toBe(403);
++    expect((await pedir(app, "GET", "/api/portadas/estado", s.mira)).statusCode).toBe(200);
++    expect((await pedir(app, "POST", "/api/portadas/entrar", s.mira)).statusCode).toBe(403);
++    // Sin sesión.
++    expect((await pedir(app, "POST", "/api/portadas/entrar")).statusCode).toBe(401);
++  });
++
++  it("sin variables: estado «no conectado» y entrar responde 503 con el mensaje amable", async () => {
++    const e = await pedir(app, "GET", "/api/portadas/estado", s.editora);
++    expect(e.statusCode).toBe(200);
++    expect(e.json()).toEqual({ conectado: false });
++    const r = await pedir(app, "POST", "/api/portadas/entrar", s.editora);
++    expect(r.statusCode).toBe(503);
++    expect(r.json().error).toBe("Portadas aún no está conectado en este servidor. Pídeselo a Luis.");
++    // Solo la URL o solo la llave tampoco basta.
++    conectar({ GANCHO_URL: URL_GANCHO });
++    expect((await pedir(app, "POST", "/api/portadas/entrar", s.editora)).statusCode).toBe(503);
++    conectar({ GANCHO_SSO_SECRET: SSO });
++    expect((await pedir(app, "POST", "/api/portadas/entrar", s.editora)).statusCode).toBe(503);
++  });
++
++  it("la configuración exige https (http solo en la red local) y llaves de al menos 32 caracteres", () => {
++    expect(urlGancho("https://portadas.erp-prismaticoos.com/")).toBe("https://portadas.erp-prismaticoos.com");
++    expect(urlGancho("http://portadas.erp-prismaticoos.com")).toBeNull();
++    expect(urlGancho("http://localhost:3000")).toBe("http://localhost:3000");
++    expect(urlGancho("https://a:b@portadas.test")).toBeNull();
++    expect(urlGancho("no es url")).toBeNull();
++    expect(configGancho({ GANCHO_URL: URL_GANCHO, GANCHO_SSO_SECRET: "corta" }).ssoSecreto).toBeNull();
++  });
++
++  it("conectado: estado con la URL", async () => {
++    conectar();
++    expect((await pedir(app, "GET", "/api/portadas/estado", s.mira)).json()).toEqual({ conectado: true, url: URL_GANCHO });
++  });
++});
++
++describe("portadas · token del inicio único", () => {
++  it("token válido con el formato de Gancho: firma sobre la parte base64url, vence en ≤ 120 s, rol editor", async () => {
++    conectar();
++    const antes = Math.floor(Date.now() / 1000);
++    const r = await pedir(app, "POST", "/api/portadas/entrar", s.editora);
++    expect(r.statusCode).toBe(200);
++    const { datos, firma, json } = decodificar(r.json().url);
++    expect(firma).toBe(createHmac("sha256", SSO).update(datos).digest("base64url"));
++    expect(firma).not.toBe(createHmac("sha256", "otra-llave-cualquiera-0123456789abcdef").update(datos).digest("base64url"));
++    expect(json.email).toBe("editora.portadas@prismaticoos.com");
++    expect(json.nombre).toBe("editora.portadas");
++    expect(json.rol).toBe("editor");
++    expect(json.exp).toBeGreaterThan(antes);
++    expect(json.exp - antes).toBeLessThanOrEqual(120);
++    expect(json.n).toMatch(/^[0-9a-f]{32}$/);
++    expect(Object.keys(json).sort()).toEqual(["email", "exp", "n", "nombre", "rol"]);
++    // Cada enlace es único.
++    const otro = decodificar((await pedir(app, "POST", "/api/portadas/entrar", s.editora)).json().url).json;
++    expect(otro.n).not.toBe(json.n);
++  });
++
++  it("rol admin con Portadas › Aprobar o siendo superadministrador", async () => {
++    conectar();
++    expect(decodificar((await pedir(app, "POST", "/api/portadas/entrar", s.jefa)).json().url).json.rol).toBe("admin");
++    expect(decodificar((await pedir(app, "POST", "/api/portadas/entrar", s.dueno)).json().url).json.rol).toBe("admin");
++  });
++
++  it("bitácora de actividad: «abrir» con quién y el rol, sin correo ni llaves", async () => {
++    conectar();
++    await pedir(app, "POST", "/api/portadas/entrar", s.jefa);
++    const abrir = (await actividadDe("portadas")).filter((a) => a.tipo === "abrir");
++    expect(abrir.some((a) => Number(a.user_id) === id.jefa && a.datos.rol === "admin")).toBe(true);
++    expect(abrir.some((a) => Number(a.user_id) === id.editora && a.datos.rol === "editor")).toBe(true);
++    expect(JSON.stringify(abrir)).not.toContain("@prismaticoos.com");
++  });
++});
++
++let ip = 0;
++/** Lo que manda el servidor de Gancho: cuerpo crudo + X-Gancho-Firma (HMAC-SHA256 en hex del cuerpo exacto). */
++function mandar(cuerpo: string, o: { firma?: string; llave?: string; sinOrigen?: boolean } = {}) {
++  const firma = o.firma ?? createHmac("sha256", o.llave ?? BITACORA).update(cuerpo).digest("hex");
++  return app.inject({
++    method: "POST", url: "/api/portadas/bitacora", payload: cuerpo, remoteAddress: `10.9.0.${(++ip % 250) + 1}`,
++    headers: { "content-type": "application/json", "x-gancho-firma": firma, ...(o.sinOrigen ? {} : { origin: ORIGEN }) },
++  });
++}
++const evento = (accion: string, detalle: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) =>
++  JSON.stringify({ modulo: "gancho", usuario: "editora.portadas", email: "editora.portadas@prismaticoos.com", accion, detalle, ip: "203.0.113.7", cuando: new Date().toISOString(), ...extra });
++const ultimo = async () => (await actividadDe("portadas")).at(-1)!;
++
++describe("portadas · bitácora que manda Gancho", () => {
++  it("sin GANCHO_BITACORA_SECRET: 503", async () => {
++    conectar({ GANCHO_URL: URL_GANCHO, GANCHO_SSO_SECRET: SSO });
++    const r = await mandar(evento("generar_propuestas", { episodio: "ep-1" }));
++    expect(r.statusCode).toBe(503);
++    expect(r.json().error).toMatch(/aún no está conectado/);
++  });
++
++  it("firma correcta: 200 y registra el hecho con el usuario del ERP, sin prompts, títulos ni nombres", async () => {
++    conectar();
++    const antes = (await actividadDe("portadas")).length;
++    const r = await mandar(evento("generar_propuestas", { episodio: "ep-12", prompt: "una chica corriendo bajo la lluvia", titulo: "El secreto de Ana", comentario: "más rojo" }));
++    expect(r.statusCode).toBe(200);
++    expect(r.json()).toMatchObject({ ok: true, registrado: true, tipo: "portadas_generadas", usuario: true });
++    const filas = await actividadDe("portadas");
++    expect(filas).toHaveLength(antes + 1);
++    const h = filas.at(-1)!;
++    expect(h).toMatchObject({ tipo: "portadas_generadas", objeto_tipo: "episodio", objeto_id: "ep-12", objeto_titulo: null });
++    expect(Number(h.user_id)).toBe(id.editora);
++    const todo = JSON.stringify(h);
++    for (const prohibido of ["lluvia", "secreto", "Ana", "rojo", "203.0.113.7", "@prismaticoos.com", "editora"]) expect(todo).not.toContain(prohibido);
++  });
++
++  it("mapea las acciones de Gancho: lote con episodios y costo en USD, versiones, corte, borrar y otra", async () => {
++    conectar();
++    expect((await mandar(evento("lote_lanzado", { canal: "youtube", episodios: 3, usd: 7.456 }))).statusCode).toBe(200);
++    expect(await ultimo()).toMatchObject({ tipo: "lote_lanzado", datos: { usd: 7.46 } });
++    expect(Number((await ultimo()).cantidad)).toBe(3);
++
++    await mandar(evento("crear_versiones", { tipos: ["tiktok", "instagram"], usd: 0.5 }));
++    expect(await ultimo()).toMatchObject({ tipo: "versiones_creadas", datos: { usd: 0.5 } });
++    expect(Number((await ultimo()).cantidad)).toBe(2);
++
++    await mandar(evento("rehacer", { propuesta: 41, razones: ["texto"], comentario: "otra pose" }));
++    expect(await ultimo()).toMatchObject({ tipo: "portada_rehecha", objeto_tipo: "portada", objeto_id: "41", datos: {} });
++    await mandar(evento("ajustar", { propuesta: 42, cambios: { texto: "NUEVO TÍTULO" } }));
++    expect(await ultimo()).toMatchObject({ tipo: "portada_ajustada", objeto_id: "42", datos: {} });
++    await mandar(evento("corregir_corte_hack", { episodio: "ep-3", finPrimero: 12.5 }));
++    expect(await ultimo()).toMatchObject({ tipo: "corte_corregido", objeto_tipo: "episodio", objeto_id: "ep-3" });
++    await mandar(evento("borrar_episodio", { episodio: "ep-4" }));
++    expect(await ultimo()).toMatchObject({ tipo: "episodio_borrado", objeto_id: "ep-4" });
++    await mandar(evento("entrar", { metodo: "erp" }));
++    expect(await ultimo()).toMatchObject({ tipo: "entrada", objeto_tipo: null, datos: {} });
++    await mandar(evento("cambiar_paleta", { color: "rojo" }));
++    expect(await ultimo()).toMatchObject({ tipo: "otra_accion", datos: { accion: "cambiar_paleta" } });
++  });
++
++  it("sin `email` (Gancho de hoy solo manda su usuario) se busca usuario@prismaticoos.com; uno que no está en el ERP queda sin usuario", async () => {
++    conectar();
++    await mandar(evento("generar_propuestas", { episodio: "ep-20" }, { email: undefined, usuario: "jefa.portadas" }));
++    expect(Number((await ultimo()).user_id)).toBe(id.jefa);
++    const r = await mandar(evento("generar_propuestas", { episodio: "ep-21" }, { email: "fantasma@prismaticoos.com" }));
++    expect(r.json()).toMatchObject({ registrado: true, usuario: false });
++    expect((await ultimo()).user_id).toBeNull();
++  });
++
++  it("firma mala: 401 y no registra nada", async () => {
++    conectar();
++    const antes = (await actividadDe("portadas")).length;
++    const cuerpo = evento("generar_propuestas", { episodio: "ep-5" });
++    expect((await mandar(cuerpo, { llave: "otra-llave-que-no-es-la-de-gancho-0123456789" })).statusCode).toBe(401);
++    expect((await mandar(cuerpo, { firma: "abc" })).statusCode).toBe(401);
++    expect((await mandar(cuerpo, { firma: "" })).statusCode).toBe(401);
++    // La firma es del cuerpo EXACTO: cambiar un espacio la invalida.
++    const firma = createHmac("sha256", BITACORA).update(cuerpo).digest("hex");
++    expect((await mandar(`${cuerpo} `, { firma })).statusCode).toBe(401);
++    expect(await actividadDe("portadas")).toHaveLength(antes);
++  });
++
++  it("`cuando` con más de 5 minutos de diferencia (viejo o adelantado): 401", async () => {
++    conectar();
++    const antes = (await actividadDe("portadas")).length;
++    const viejo = new Date(Date.now() - 6 * 60_000).toISOString();
++    const futuro = new Date(Date.now() + 6 * 60_000).toISOString();
++    for (const cuando of [viejo, futuro, "ayer"]) {
++      const r = await mandar(evento("generar_propuestas", { episodio: "ep-6" }, { cuando }));
++      expect(r.statusCode, cuando).toBe(401);
++    }
++    expect(await actividadDe("portadas")).toHaveLength(antes);
++  });
++
++  it("un evento repetido (misma firma) no se cuenta dos veces; cuerpos inválidos o de más de 32 KB se rechazan", async () => {
++    conectar();
++    const cuerpo = evento("generar_propuestas", { episodio: "ep-7" });
++    const antes = (await actividadDe("portadas")).length;
++    expect((await mandar(cuerpo)).json()).toMatchObject({ ok: true, registrado: true });
++    expect((await mandar(cuerpo)).json()).toMatchObject({ ok: true, repetido: true });
++    expect(await actividadDe("portadas")).toHaveLength(antes + 1);
++    expect((await mandar(JSON.stringify({ modulo: "otro", accion: "x", cuando: new Date().toISOString() }))).statusCode).toBe(400);
++    expect((await mandar("no es json")).statusCode).toBe(400);
++    expect((await mandar(evento("generar_propuestas", { relleno: "x".repeat(33 * 1024) }))).statusCode).toBe(413);
++  });
++
++  it("sin encabezado Origin el núcleo la rechaza (protección CSRF): Gancho debe mandar el Origin del ERP", async () => {
++    conectar();
++    expect((await mandar(evento("generar_propuestas", { episodio: "ep-8" }), { sinOrigen: true })).statusCode).toBe(403);
++  });
++});
++
++describe("portadas · traducción de eventos (lógica pura)", () => {
++  it("solo ids y conteos válidos; nada de textos", () => {
++    const ev = leerEvento({ modulo: "gancho", usuario: "x", accion: "generar_propuestas", detalle: { episodio: "ep 1; DROP", cantidad: 3 }, cuando: "2026-10-14T12:00:00Z" })!;
++    expect(hechoDe(ev)).toEqual({ tipo: "portadas_generadas", cantidad: 3, datos: {} });
++    expect(leerEvento([])).toBeNull();
++    expect(leerEvento({ modulo: "gancho", accion: "", cuando: "x" })).toBeNull();
++    expect(correoDe({ ...ev, email: "alguien@otra.com" }, "prismaticoos.com")).toBeNull();
++    expect(correoDe({ ...ev, email: null, usuario: "sistema" }, "prismaticoos.com")).toBeNull();
++    expect(correoDe({ ...ev, email: null, usuario: "luis.solis" }, "prismaticoos.com")).toBe("luis.solis@prismaticoos.com");
++  });
++});
+-- 
+2.50.1 (Apple Git-155)
+

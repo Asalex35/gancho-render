@@ -75,6 +75,7 @@ async function imagenDePrueba(texto) {
 let cacheCreditos = { v: null, t: 0 };
 // Para decidir si se gasta (p. ej. repintar): { espera: 15000, fresco: true }.
 export async function creditos({ espera = 5000, fresco = false } = {}) {
+  if (!config.nanoBananaKey) return null;
   if (!fresco && Date.now() - cacheCreditos.t < 30e3) return cacheCreditos.v;
   let v = null;
   try {

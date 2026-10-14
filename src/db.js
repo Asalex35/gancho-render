@@ -3,9 +3,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
-import { config } from "./config.js";
+import { config, sslDe } from "./config.js";
 
-const ssl = /localhost|127\.0\.0\.1/.test(config.databaseUrl) ? false : { rejectUnauthorized: false };
+const ssl = sslDe();
 export const pool = new pg.Pool({
   connectionString: config.databaseUrl, ssl, max: Number(process.env.DB_POOL || 10),
   statement_timeout: 60000, connectionTimeoutMillis: 10000,

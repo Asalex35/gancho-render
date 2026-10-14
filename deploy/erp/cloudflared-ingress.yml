@@ -1,0 +1,8 @@
+# Agregar en /etc/cloudflared/config.yml del servidor, ANTES de la regla final `- service: http_status:404`.
+# Producción (erp-produccion):
+  - hostname: portadas.erp-prismaticoos.com
+    service: http://127.0.0.1:8082
+# Pruebas (erp-pruebas):
+#  - hostname: portadas-pruebas.erp-prismaticoos.com
+#    service: http://127.0.0.1:8082
+# Luego: cloudflared tunnel route dns <túnel> portadas.erp-prismaticoos.com && sudo systemctl restart cloudflared

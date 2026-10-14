@@ -1053,6 +1053,7 @@ async function vistaAdmin() {
       h("div", { class: "row", style: { gap: "10px" } }, h("b", {}, `Gancho usa ${gb(total)}`),
         a.disco ? h("span", { class: `tag${lleno > 0.85 ? " bad" : lleno > 0.7 ? " warn" : " ok"}` }, `Disco al ${Math.round(lleno * 100)} % · libres ${gb(a.disco.libre)}`) : h("span", { class: "tag" }, "En la nube")),
       h("div", { class: "row", style: { gap: "6px" } }, Object.entries(a.carpetas).filter(([, c]) => c.archivos).map(([k, c]) => h("span", { class: "tag" }, `${NOMBRES[k] || k}: ${gb(c.bytes)}`))),
+      h("a", { class: "btn ghost", href: "/api/admin/respaldo", download: "" }, "⬇ Descargar respaldo (para mudar de servidor)"),
       h("span", { class: "muted", style: { fontSize: ".8rem" } }, "Se borran solos: videos (3 días), textos (7), cuadros sin usar (14), propuestas reemplazadas y anteriores viejas (30); las no elegidas quedan en miniatura (60). Lo elegido y las versiones de redes nunca se borran."));
   }).catch(() => almacenamiento.remove());
 

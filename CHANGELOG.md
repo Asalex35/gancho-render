@@ -1,5 +1,14 @@
 # Cambios de Gancho
 
+## 1.0.0 — 2026-10-14 · Lista para producción en el ERP de Prismaticoos
+- **Instalación en el servidor del ERP** (`deploy/erp/`): guía paso a paso para Luis, servicio systemd endurecido, nginx solo en `127.0.0.1`, ruta del túnel de Cloudflare, variables sin comentarios en línea, CORS y ciclo de vida de Spaces, y `desplegar.sh` (actualiza, revisa y solo entonces reinicia).
+- **Cloudflare Access verificado por Gancho** (`CF_ACCESS_TEAM`, `CF_ACCESS_AUD`): sin el pase firmado no se entra; el correo de Access debe ser el mismo del token del ERP y la sesión se cierra si cambia la persona.
+- **Base administrada con TLS verificado** (`sslrootcert` en la URL o `DATABASE_SSL_CA`); socket local sin TLS en pruebas. `HOST` para escuchar solo dentro del servidor.
+- **`npm run verificar`**: revisión de la instalación en español (sistema, variables, ERP, Access, base, Spaces, ffmpeg, caras y cada llave de IA) sin gastar.
+- **Respaldo para mudar de servidor**: Administración › Descargar respaldo (tablas + imágenes, sin videos) y `npm run importar -- archivo --renombrar viejo=nuevo` en la base nueva.
+- Revisión de código aplicada: el respaldo ya no se cuelga si se cancela la descarga y avisa si faltó algún archivo; al importar, la bitácora y el feedback siguen numerando bien; Access no se apaga con media configuración, comparte la lectura de llaves y sigue funcionando si Cloudflare tarda; TLS de la base decidido por el host; `desplegar.sh` regresa solo a la versión anterior si algo falla.
+- La bitácora que llega al ERP lleva el correo de la persona, el `Origin` del ERP y el service token de Access (`ERP_BITACORA_CF_ID`/`_SECRET`). Copia del módulo «Portadas» del ERP en `deploy/erp/modulo-erp/`. `NANOBANANA_API_KEY` ya es opcional (basta una llave de imágenes).
+
 ## 0.9.0 — 2026-10-14
 - **Solo salen los personajes que pides**: la portada lleva únicamente a los actores con foto (y a un personaje sin foto solo si las notas lo piden por nombre). Sin extras, gente al fondo ni siluetas. Si el detector encuentra caras de más, la portada se repinta sola quitándolas.
 - **Google oficial primero**: imágenes con la API oficial de Gemini (Nano Banana Pro); si falla, nanobananaapi.ai y luego fal.ai. Costo mostrado en US$ cuando el principal es Google.

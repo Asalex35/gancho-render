@@ -1,5 +1,6 @@
 // Toda la configuración sale de variables de entorno. Ver .env.example.
 import crypto from "node:crypto";
+import { readFileSync } from "node:fs";
 
 const env = process.env;
 const PROD = env.NODE_ENV === "production";
@@ -16,12 +17,15 @@ function requerido(k) {
 export const config = {
   prod: PROD,
   port: PORT,
+  // En los servidores del ERP: 127.0.0.1 (solo nginx/cloudflared llegan). En Render/Docker: 0.0.0.0.
+  host: env.HOST || "0.0.0.0",
   // web = solo interfaz y API · worker = solo procesa la cola · all = las dos cosas (lo más simple)
   role: env.ROLE || "all",
   publicBaseUrl: PUBLIC_BASE_URL,
   databaseUrl: requerido("DATABASE_URL"),
   anthropicKey: requerido("ANTHROPIC_API_KEY"),
-  nanoBananaKey: requerido("NANOBANANA_API_KEY"),
+  // Imágenes: basta con UN proveedor (Google oficial, nanobananaapi.ai o fal.ai); el orden lo da IMAGE_PROVIDERS.
+  nanoBananaKey: env.NANOBANANA_API_KEY || "",
   // Haiku (barato) para descripción, tags, revisión de portadas y lo mecánico.
   // Sonnet para lo creativo (títulos, ideas de portada, entender el video): con Haiku los títulos salían narrativos.
   claudeModel: env.CLAUDE_MODEL || "claude-haiku-5-5",
@@ -68,4 +72,20 @@ if (config.prod && config.storage.driver === "local" && !env.DATA_DIR) {
 }
 if (config.role !== "all" && config.storage.driver === "local" && config.prod) {
   throw new Error("Con ROLE=web/worker separados necesitas S3/R2 (S3_BUCKET). O usa ROLE=all en un solo servicio.");
+}
+
+// TLS de Postgres. Socket local o localhost: sin TLS. Base administrada (DigitalOcean): con su certificado y verificando
+// el nombre (verify-full) si se da DATABASE_SSL_CA o sslrootcert en la URL; si no, cifrado sin verificar (Render).
+export function sslDe(url = config.databaseUrl) {
+  let u = null;
+  try { u = new URL(url); } catch {}
+  const host = u ? (u.searchParams.get("host") || decodeURIComponent(u.hostname)) : "";
+  if (env.DATABASE_SSL === "off" || !host || host.startsWith("/") || ["localhost", "127.0.0.1", "::1", "[::1]"].includes(host)) return false;
+  const ca = env.DATABASE_SSL_CA || u?.searchParams.get("sslrootcert") || "";
+  if (ca) return { ca: readFileSync(ca, "utf8"), rejectUnauthorized: true };
+  return { rejectUnauthorized: false };
+}
+
+if (!env.GOOGLE_API_KEY && !env.NANOBANANA_API_KEY && !env.FAL_KEY && !config.mockImages) {
+  throw new Error("Falta una llave de imágenes: GOOGLE_API_KEY (recomendada), NANOBANANA_API_KEY o FAL_KEY. Revisa .env.example");
 }

@@ -31,9 +31,12 @@ export async function init() {
 }
 
 export async function guardar(carpeta, buffer, ext) {
-  const key = `${carpeta}/${crypto.randomBytes(15).toString("base64url")}.${ext}`;
+  return guardarEn(`${carpeta}/${crypto.randomBytes(15).toString("base64url")}.${ext}`, buffer);
+}
+// Con la key exacta (para importar un respaldo con las mismas rutas).
+export async function guardarEn(key, buffer) {
   if (s3) await s3.send(new PutObjectCommand({ Bucket: S.bucket, Key: key, Body: buffer, ContentType: mimeDe(key) }));
-  else await fs.writeFile(local(key), buffer);
+  else { await fs.mkdir(path.dirname(local(key)), { recursive: true }); await fs.writeFile(local(key), buffer); }
   return key;
 }
 
@@ -140,4 +143,20 @@ export async function tamanos() {
   let disco = null;
   if (!s3) { const d = await fs.statfs(S.localDir).catch(() => null); if (d) disco = { total: d.blocks * d.bsize, libre: d.bavail * d.bsize }; }
   return { carpetas: out, disco };
+}
+
+// Todas las keys de una carpeta (para el respaldo).
+export async function* listar(carpeta) {
+  if (s3) {
+    let token;
+    do {
+      const r = await s3.send(new ListObjectsV2Command({ Bucket: S.bucket, Prefix: `${carpeta}/`, ContinuationToken: token }));
+      for (const o of r.Contents || []) yield o.Key;
+      token = r.IsTruncated ? r.NextContinuationToken : null;
+    } while (token);
+  } else {
+    for (const f of await fs.readdir(path.resolve(S.localDir, carpeta)).catch(() => [])) {
+      if (keyValida(`${carpeta}/${f}`)) yield `${carpeta}/${f}`;
+    }
+  }
 }

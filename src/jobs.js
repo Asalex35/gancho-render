@@ -9,7 +9,7 @@
 import { PgBoss } from "pg-boss";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { config } from "./config.js";
+import { config, sslDe } from "./config.js";
 import { q, one, all, tx } from "./db.js";
 import * as repo from "./repo.js";
 import * as storage from "./storage.js";
@@ -28,7 +28,7 @@ import { als, senal } from "./contexto.js";
 
 export const boss = new PgBoss({
   connectionString: config.databaseUrl,
-  ssl: /localhost|127\.0\.0\.1/.test(config.databaseUrl) ? false : { rejectUnauthorized: false },
+  ssl: sslDe(),
   max: 5,
 });
 boss.on("error", (e) => console.error("Cola:", e.message));

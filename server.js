@@ -21,7 +21,7 @@ await iniciarCola();
 
 let server;
 if (config.role === "all" || config.role === "web") {
-  server = crearApp().listen(config.port, () => {
+  server = crearApp().listen(config.port, config.host, () => {
     console.log(`Gancho listo en ${config.publicBaseUrl}`);
     if (!config.refsPublicas) console.log("ℹ️  Modo local: Nano Banana no puede ver las fotos del cast (usa S3/R2 o publica la app).");
   });

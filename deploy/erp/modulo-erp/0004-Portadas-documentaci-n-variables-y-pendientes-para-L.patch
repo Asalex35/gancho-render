@@ -1,0 +1,136 @@
+From b88832f74cfc61512f497bbb24704879a2f87b0f Mon Sep 17 00:00:00 2001
+From: "Carlitos Alexander (Carlos Ortiz)" <carlos.ortiz@prismaticoos.com>
+Date: Wed, 14 Oct 2026 17:44:32 -0600
+Subject: [PATCH 4/4] =?UTF-8?q?Portadas:=20documentaci=C3=B3n,=20variables?=
+ =?UTF-8?q?=20y=20pendientes=20para=20Luis?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ docs/portadas/README.md | 112 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 112 insertions(+)
+ create mode 100644 docs/portadas/README.md
+
+diff --git a/docs/portadas/README.md b/docs/portadas/README.md
+new file mode 100644
+index 0000000..7dc9550
+--- /dev/null
++++ b/docs/portadas/README.md
+@@ -0,0 +1,112 @@
++# Portadas (Gancho)
++
++**Social Media › Portadas** es un puente pequeño hacia **Gancho**, la herramienta de portadas, títulos y descripciones
++para YouTube, TikTok, Instagram, Facebook y Prisma Plus. Gancho vive aparte, en su propio subdominio (p. ej.
++`https://portadas.erp-prismaticoos.com`), en los servidores de Luis. El ERP no guarda portadas ni tiene tablas propias
++para esto: solo
++
++1. **abre Gancho con la cuenta del ERP** (inicio único: nadie escribe otra contraseña), y
++2. **recibe la bitácora** de lo que cada persona hace en Gancho para la bitácora de actividad del ERP (Rendimiento).
++
++Código: `server/src/modules/portadas/` (API) y `src/modules/portadas/` (pantalla). Pruebas: `server/test/portadas.test.ts`.
++
++## Permisos (Usuarios y roles › «Portadas (Gancho)»)
++
++| Acción  | Qué permite |
++|---------|-------------|
++| Ver     | Ver la pantalla Social Media › Portadas. |
++| Crear   | Generar portadas, títulos y versiones (abrir Gancho como **editor**). |
++| Aprobar | Administrar Gancho: ver lo de todo el equipo y lanzar trabajos de más de US$5 (entra como **admin**). |
++
++El superadministrador entra siempre como admin.
++
++## Variables de entorno (en `/etc/erp/erp.env` del servidor del ERP)
++
++| Variable | Qué es |
++|----------|--------|
++| `GANCHO_URL` | Dirección de Gancho, p. ej. `https://portadas.erp-prismaticoos.com` (https; http solo para `localhost` o `*.local`). |
++| `GANCHO_SSO_SECRET` | Llave compartida del inicio único. Al menos 32 caracteres (p. ej. `openssl rand -hex 32`). |
++| `GANCHO_BITACORA_SECRET` | Llave con la que Gancho firma la bitácora. Al menos 32 caracteres y **distinta** de la anterior. |
++
++- Sin `GANCHO_URL` o `GANCHO_SSO_SECRET` (o con una llave de menos de 32 caracteres), Portadas sigue encendido pero
++  responde **503 «Portadas aún no está conectado en este servidor. Pídeselo a Luis.»** y la pantalla lo muestra así.
++  Por eso el módulo **no** está en `apagadosFueraDeLocal`.
++- Sin `GANCHO_BITACORA_SECRET`, `POST /api/portadas/bitacora` responde 503 (Gancho sigue funcionando; solo no llega su
++  bitácora al ERP).
++- Se leen con `process.env` dentro del módulo (`server/src/modules/portadas/gancho.ts`), no en `core/config`. Basta con
++  ponerlas en `erp.env` y reiniciar la API.
++
++### Las mismas llaves en Gancho
++
++En el servidor de Gancho van con otro nombre:
++
++```env
++ERP_SSO_SECRET=<el mismo valor que GANCHO_SSO_SECRET>
++ERP_BITACORA_SECRET=<el mismo valor que GANCHO_BITACORA_SECRET>
++ERP_BITACORA_URL=https://sistema.erp-prismaticoos.com/api/portadas/bitacora
++```
++
++(En el servidor de pruebas, `https://pruebas.erp-prismaticoos.com/api/portadas/bitacora`.) Las llaves se pasan por un
++canal seguro; nunca en git, en el chat ni en capturas.
++
++## Cómo funciona
++
++### `GET /api/portadas/estado` (Portadas › Ver)
++`{ conectado: boolean, url?: string }`.
++
++### `POST /api/portadas/entrar` (Portadas › Crear; 20 por minuto)
++Responde `{ url }` = `${GANCHO_URL}/sso?t=<token>`. El token es exactamente el que Gancho verifica:
++
++```
++token = base64url(JSON) + "." + base64url(HMAC-SHA256(GANCHO_SSO_SECRET, base64url(JSON)))
++JSON  = { email, nombre, rol: "admin" | "editor", exp: ahora + 90 s (Unix), n: 16 bytes aleatorios en hex }
++```
++
++Gancho rechaza tokens con más de 120 s de vida y no deja reusar uno. Queda en la auditoría (`portadas.entrar`, con el
++rol) y en la bitácora de actividad (`portadas.abrir`). Solo cuentas `@prismaticoos.com`.
++
++La pantalla abre la pestaña nueva en el mismo clic (para que Safari no la bloquee) y le quita el acceso a la ventana del
++ERP (`opener = null`, equivalente a `noopener`); si el navegador la bloquea, muestra el enlace.
++
++### `POST /api/portadas/bitacora` (público, firmado; 600 por minuto)
++Lo llama el servidor de Gancho con el cuerpo JSON
++`{ modulo: "gancho", usuario, email?, accion, detalle, ip, cuando }` y el encabezado
++`X-Gancho-Firma` = HMAC-SHA256 **en hex** del **cuerpo crudo exacto** con `GANCHO_BITACORA_SECRET`.
++
++- Sin secreto: 503 · firma mala: 401 · `cuando` con más de 5 minutos de diferencia: 401 · cuerpo de más de 32 KB: 413 ·
++  cuerpo que no es de Gancho: 400 · el mismo evento dos veces (misma firma): se acepta pero no se cuenta doble.
++- Quién: por `email` (o, si no viene, `usuario@prismaticoos.com`, porque el usuario de Gancho es la parte antes de la @),
++  con la ventanilla `usuariosBasicos()` de `core/usuarios.ts`. Si no existe en el ERP, el hecho queda sin usuario.
++- En la bitácora solo quedan **ids, conteos y el costo estimado en dólares** (`datos.usd`). Nunca prompts, títulos,
++  comentarios, nombres de personas ni la IP.
++
++| Acción de Gancho | Hecho en la bitácora del ERP |
++|------------------|------------------------------|
++| `entrar` | `entrada` (inicio de sesión en Gancho) |
++| `generar` / `generar_propuestas` | `portadas_generadas` (episodio; cantidad si Gancho la manda) |
++| `rehacer` | `portada_rehecha` |
++| `ajustar` | `portada_ajustada` |
++| `crear_versiones` | `versiones_creadas` (cantidad = número de versiones; `usd`) |
++| `lote_lanzado` | `lote_lanzado` (cantidad = episodios; `usd`) |
++| `borrar_episodio` | `episodio_borrado` |
++| `corregir_corte_hack` | `corte_corregido` |
++| cualquier otra | `otra_accion` (`datos.accion` = la clave) |
++
++## Pendientes para Luis
++
++1. **Origen (protección CSRF del núcleo).** `app.ts` rechaza con 403 todo POST cuyo `Origin` (o `Referer`) no sea
++   `APP_ORIGIN`. Una llamada de servidor a servidor no lo trae. Opciones: (a) Gancho manda
++   `Origin: https://sistema.erp-prismaticoos.com` (el origen de `ERP_BITACORA_URL`), que es lo que hoy esperan las
++   pruebas; o (b) el núcleo exceptúa las rutas públicas que verifican su propia firma. La prueba
++   «sin encabezado Origin…» documenta el comportamiento actual.
++2. **Cloudflare Access.** `sistema.erp-prismaticoos.com` está detrás de Access: la llamada de Gancho a
++   `/api/portadas/bitacora` necesita un *service token* (encabezados `CF-Access-Client-Id`/`CF-Access-Client-Secret`
++   desde Gancho) o una regla *Bypass* solo para esa ruta. La firma HMAC ya protege la ruta.
++3. **Ventanilla para buscar un usuario por correo.** `core/usuarios.ts` no tiene una; hoy se usa `usuariosBasicos()`
++   (todos los usuarios) y se filtra en memoria. Basta para el tamaño del equipo; una `usuarioPorCorreo(email)` sería más
++   directa.
++4. **`usd` en `datos`.** La bitácora rechaza llaves como `costo` o `monto`; el costo estimado de IA va como `usd`
++   (pedido explícito para medir gasto por persona). Confirmar que está bien que quede en la bitácora.
++5. Poner las tres variables en `erp.env` de pruebas y producción, y las de Gancho (`ERP_SSO_SECRET`,
++   `ERP_BITACORA_SECRET`, `ERP_BITACORA_URL`) en su servidor. Opcional en Gancho: `ERP_SOLO=1` (solo se entra desde el
++   ERP) y `ERP_LIMITE_USD=5`.
+-- 
+2.50.1 (Apple Git-155)
+

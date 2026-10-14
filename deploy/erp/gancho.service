@@ -1,0 +1,36 @@
+# /etc/systemd/system/gancho.service — Gancho (Social Media › Portadas) en el servidor del ERP.
+# Mismo endurecimiento que erp-api.service. Usuario propio `gancho`, sin privilegios ni SSH.
+[Unit]
+Description=Gancho · portadas y títulos (Prismaticoos ERP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gancho
+Group=gancho
+WorkingDirectory=/var/www/gancho
+EnvironmentFile=/etc/gancho/gancho.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+# Leer un video largo usa memoria: si se pasa, systemd lo reinicia en vez de tumbar el servidor del ERP.
+MemoryMax=3G
+TimeoutStopSec=30
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Escribe solo en su carpeta de datos (imágenes, caras y videos temporales si no hay Spaces).
+ReadWritePaths=/var/lib/gancho
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# Node (JIT) y onnxruntime necesitan memoria ejecutable.
+MemoryDenyWriteExecute=false
+
+[Install]
+WantedBy=multi-user.target
